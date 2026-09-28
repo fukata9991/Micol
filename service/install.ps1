@@ -41,16 +41,34 @@ foreach ($cmd in 'node', 'git', 'ffmpeg', 'ffprobe') {
 & git -C $Root rev-parse --abbrev-ref '@{u}' *> $null
 if ($LASTEXITCODE -ne 0) { Fail "git の追跡ブランチが設定されていません。git clone したフォルダで実行してください。" }
 
+# 管理者として clone した場合などにフォルダの所有者が違っても git が使えるようにする
+$safeDir = $Root -replace '\\', '/'
+$safeList = @(& git config --global --get-all safe.directory 2>$null)
+if ($safeList -notcontains $safeDir) { & git config --global --add safe.directory $safeDir }
+
+# ffmpeg / ffprobe はフルパスで設定しておく（常駐時に PATH が通っていなくても動くように）
+$dataDir = Join-Path $Root 'data'
+$configFile = Join-Path $dataDir 'config.json'
+New-Item -ItemType Directory -Force $dataDir | Out-Null
+$cfg = [pscustomobject]@{}
+if (Test-Path $configFile) {
+  try { $cfg = Get-Content $configFile -Raw -Encoding UTF8 | ConvertFrom-Json } catch { Fail "設定ファイルを読み込めません: $configFile" }
+}
+foreach ($pair in @(@('ffmpegPath', 'ffmpeg'), @('ffprobePath', 'ffprobe'))) {
+  $key, $cmd = $pair
+  if (-not $cfg.$key -or $cfg.$key -eq $cmd) {
+    $cfg | Add-Member -NotePropertyName $key -NotePropertyValue (Get-Command $cmd).Source -Force
+  }
+}
+# BOM なしの UTF-8 で書く（Node.js 側で読めるように）
+[IO.File]::WriteAllText($configFile, ($cfg | ConvertTo-Json -Depth 10), (New-Object Text.UTF8Encoding $false))
+
 # 既存の登録・プロセスを止める
 Stop-ScheduledTask -TaskName $TaskName -ErrorAction SilentlyContinue
 & "$PSScriptRoot\stop-processes.ps1" -Root $Root
 
-# ポート（設定ファイルがあればそこから）
-$port = 8420
-$configFile = Join-Path $Root 'data\config.json'
-if (Test-Path $configFile) {
-  try { $port = (Get-Content $configFile -Raw -Encoding UTF8 | ConvertFrom-Json).port } catch {}
-}
+# ポート（設定ファイルにあればそれを使う）
+$port = if ($cfg.port) { $cfg.port } else { 8420 }
 
 # タスクスケジューラに登録
 $user = [Security.Principal.WindowsIdentity]::GetCurrent().Name

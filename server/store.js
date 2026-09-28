@@ -24,7 +24,8 @@ export class JsonStore {
     this.timer = null;
     this.data = structuredClone(defaults);
     try {
-      Object.assign(this.data, JSON.parse(fs.readFileSync(this.file, 'utf8')));
+      // 手で編集して BOM 付きで保存された場合も読めるようにする
+      Object.assign(this.data, JSON.parse(fs.readFileSync(this.file, 'utf8').replace(/^﻿/, '')));
     } catch {}
   }
 

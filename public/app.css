@@ -269,3 +269,17 @@ input[type=range].seek:hover::-webkit-slider-thumb { margin-top: -4px; }
 .commit-list { margin: 6px 0 10px; padding-left: 18px; color: var(--text); }
 .commit-list li { margin: 2px 0; }
 .commit-list code { color: var(--accent); font-size: 12px; }
+
+/* ---------- ログイン ---------- */
+body.auth-mode .topbar { display: none; }
+.auth-box {
+  max-width: 380px; margin: 10vh auto 0; padding: 28px; display: flex; flex-direction: column; gap: 14px;
+  background: var(--surface); border: 1px solid var(--border); border-radius: 14px;
+}
+.auth-box h2 { font-size: 18px; }
+.auth-box p { margin: 0; line-height: 1.7; }
+.auth-box .btn { margin-top: 6px; padding: 11px; }
+.auth-box code { background: var(--bg); padding: 1px 6px; border-radius: 4px; }
+.logo.big { font-size: 24px; justify-content: center; margin-bottom: 4px; }
+.tag { font-size: 11px; padding: 1px 7px; border-radius: 4px; background: var(--accent); color: #fff; vertical-align: middle; }
+.check { display: flex; align-items: center; gap: 6px; font-size: 14px; padding-bottom: 8px; cursor: pointer; }

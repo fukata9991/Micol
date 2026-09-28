@@ -3,6 +3,8 @@
 const $ = (s, el = document) => el.querySelector(s);
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
 
+let me = null; // ログイン中のユーザー { id, name, admin }
+
 async function api(url, opts = {}) {
   const init = { ...opts };
   if (opts.body !== undefined) {
@@ -13,6 +15,11 @@ async function api(url, opts = {}) {
   if (!r.ok) {
     let msg = r.statusText;
     try { msg = (await r.json()).error || msg; } catch {}
+    // セッション切れ（別の端末でパスワード変更された等）はログイン画面へ
+    if (r.status === 401 && !url.startsWith('/api/auth/') && me) {
+      me = null;
+      showAuth();
+    }
     throw new Error(msg);
   }
   return r.json();
@@ -174,7 +181,7 @@ async function router() {
   if (parts[0] !== 'play') window.scrollTo(0, 0);
 }
 
-window.addEventListener('hashchange', router);
+window.addEventListener('hashchange', () => me && router());
 
 let searchTimer;
 const searchForm = $('#search-form');
@@ -255,7 +262,7 @@ async function renderItem(view, id) {
     <div class="detail">
       <div>
         <div class="detail-thumb"><img src="${thumbUrl(it)}" alt="" ${onImgError}></div>
-        <button class="btn small thumb-edit" id="edit-thumb">🖼 サムネイルを変更</button>
+        ${me.admin ? '<button class="btn small thumb-edit" id="edit-thumb">🖼 サムネイルを変更</button>' : ''}
       </div>
       <div>
         ${it.nfo?.showTitle ? `<div class="muted">${esc(it.nfo.showTitle)}</div>` : ''}
@@ -291,7 +298,7 @@ async function renderItem(view, id) {
     await api(`/api/items/${id}/watched`, { method: 'POST', body: { watched: !it.watched } });
     router();
   };
-  $('#edit-thumb', view).onclick = async () => {
+  if (me.admin) $('#edit-thumb', view).onclick = async () => {
     if (await thumbEditor(it)) router();
   };
 }
@@ -436,7 +443,7 @@ async function renderPlayer(view, id, params, seq) {
         <button class="pbtn" data-a="back" title="戻る">${ICON.back}</button>
         <div class="ptitle">${esc(it.name)}</div>
         <span class="mode-badge"></span>
-        <button class="pbtn" data-a="snap" title="この場面をサムネイルに設定">${ICON.snap}</button>
+        ${me.admin ? `<button class="pbtn" data-a="snap" title="この場面をサムネイルに設定">${ICON.snap}</button>` : ''}
       </div>
       <div class="ctl ctl-bottom">
         <input type="range" class="seek" min="0" max="0" step="0.1" value="0" aria-label="再生位置">
@@ -667,7 +674,7 @@ async function renderPlayer(view, id, params, seq) {
   btn('fwd').onclick = () => seek(current() + 10);
   btn('back').onclick = goBack;
   btn('fs').onclick = toggleFullscreen;
-  btn('snap').onclick = async () => {
+  if (me.admin) btn('snap').onclick = async () => {
     try {
       await api(`/api/items/${id}/thumb`, { method: 'PUT', body: { t: current() } });
       toast(`${fmtTime(current())} の場面をサムネイルに設定しました`);
@@ -747,6 +754,11 @@ async function renderPlayer(view, id, params, seq) {
 // ---------- 設定 ----------
 
 async function renderSettings(view) {
+  if (!me.admin) {
+    view.innerHTML = `<div class="settings"><h1 class="page-title">設定</h1>${accountPanel()}</div>`;
+    bindAccount(view);
+    return;
+  }
   let s;
   try {
     s = await api('/api/settings');
@@ -765,9 +777,10 @@ async function renderSettings(view) {
   view.innerHTML = `
     <div class="settings">
       <h1 class="page-title">設定</h1>
+      ${accountPanel()}
       <section class="panel">
         <h2>ライブラリ（メディアフォルダ）</h2>
-        <ul class="lib-list"></ul>
+        <ul class="lib-list" id="lib-list"></ul>
         <form class="form-row" id="add-lib">
           <label class="field"><span>表示名</span><input name="name" placeholder="例: アニメ"></label>
           <label class="field grow"><span>フォルダ</span><input name="path" placeholder="例: D:\\Videos" required></label>
@@ -775,6 +788,17 @@ async function renderSettings(view) {
           <button class="btn primary">追加</button>
         </form>
         <p class="hint">フォルダ内の変更は自動で検出され、数秒後に反映されます。</p>
+      </section>
+      <section class="panel">
+        <h2>ユーザー</h2>
+        <ul class="lib-list" id="user-list"></ul>
+        <form class="form-row" id="add-user">
+          <label class="field"><span>ユーザー名</span><input name="name" required maxlength="32" autocomplete="off"></label>
+          <label class="field"><span>パスワード（8 文字以上）</span><input name="password" type="password" required minlength="8" autocomplete="new-password"></label>
+          <label class="check"><input type="checkbox" name="admin"> 管理者</label>
+          <button class="btn primary">追加</button>
+        </form>
+        <p class="hint">管理者は設定の変更・ユーザー管理・アップデート・サムネイルの変更ができます。視聴履歴はユーザーごとに記録されます。</p>
       </section>
       <section class="panel">
         <h2>トランスコード</h2>
@@ -808,7 +832,7 @@ async function renderSettings(view) {
       </section>
     </div>`;
 
-  const list = $('.lib-list', view);
+  const list = $('#lib-list', view);
   const addForm = $('#add-lib', view);
   const tcForm = $('#tc', view);
 
@@ -944,6 +968,8 @@ async function renderSettings(view) {
     } catch {}
   }
 
+  bindAccount(view);
+  bindUsers(view);
   drawLibs();
   updateStatus();
   const timer = setInterval(updateStatus, 2000);
@@ -999,4 +1025,164 @@ function pickFolder(initial) {
   });
 }
 
-router();
+boot();
+
+// ---------- アカウント ----------
+
+function accountPanel() {
+  return `<section class="panel">
+    <h2>アカウント</h2>
+    <div class="form-row" style="align-items:center">
+      <span style="flex:1">${esc(me.name)} としてログイン中${me.admin ? '（管理者）' : ''}</span>
+      <button class="btn" id="logout">ログアウト</button>
+    </div>
+    <form class="form-row" id="pw-form">
+      <label class="field"><span>現在のパスワード</span><input type="password" name="current" required autocomplete="current-password"></label>
+      <label class="field"><span>新しいパスワード</span><input type="password" name="password" required minlength="8" autocomplete="new-password"></label>
+      <label class="field"><span>新しいパスワード（確認）</span><input type="password" name="confirm" required minlength="8" autocomplete="new-password"></label>
+      <button class="btn">パスワードを変更</button>
+    </form>
+  </section>`;
+}
+
+function bindAccount(view) {
+  $('#logout', view).onclick = async () => {
+    await api('/api/auth/logout', { method: 'POST', body: {} }).catch(() => {});
+    me = null;
+    showAuth();
+  };
+  const form = $('#pw-form', view);
+  form.onsubmit = async (e) => {
+    e.preventDefault();
+    if (form.password.value !== form.confirm.value) return toast('新しいパスワードが一致しません');
+    try {
+      await api('/api/auth/password', { method: 'POST', body: { current: form.current.value, password: form.password.value } });
+      form.reset();
+      toast('パスワードを変更しました（他の端末はログアウトされます）');
+    } catch (err) { toast(err.message); }
+  };
+}
+
+function bindUsers(view) {
+  const list = $('#user-list', view);
+  const form = $('#add-user', view);
+  let users = [];
+
+  async function load() {
+    try {
+      users = await api('/api/users');
+    } catch (err) { return toast(err.message); }
+    list.innerHTML = users.map((u) => `<li>
+      <div class="info"><div>${esc(u.name)}${u.admin ? ' <span class="tag">管理者</span>' : ''}${u.id === me.id ? ' <span class="muted">（あなた）</span>' : ''}</div></div>
+      <button class="btn small" data-act="admin" data-id="${u.id}">${u.admin ? '管理者を外す' : '管理者にする'}</button>
+      <button class="btn small" data-act="password" data-id="${u.id}">パスワード再設定</button>
+      <button class="btn small danger" data-act="delete" data-id="${u.id}">削除</button>
+    </li>`).join('');
+  }
+
+  list.onclick = async (e) => {
+    const b = e.target.closest('[data-act]');
+    if (!b) return;
+    const u = users.find((x) => x.id === b.dataset.id);
+    try {
+      if (b.dataset.act === 'admin') {
+        await api(`/api/users/${u.id}`, { method: 'PUT', body: { admin: !u.admin } });
+        if (u.id === me.id) return location.reload();
+      } else if (b.dataset.act === 'password') {
+        const pw = prompt(`「${u.name}」の新しいパスワード（8 文字以上）`);
+        if (!pw) return;
+        await api(`/api/users/${u.id}`, { method: 'PUT', body: { password: pw } });
+        toast('パスワードを再設定しました');
+      } else if (b.dataset.act === 'delete') {
+        if (!confirm(`「${u.name}」を削除しますか？（視聴履歴も削除されます）`)) return;
+        await api(`/api/users/${u.id}`, { method: 'DELETE' });
+        if (u.id === me.id) return location.reload();
+        toast('削除しました');
+      }
+      load();
+    } catch (err) { toast(err.message); }
+  };
+
+  form.onsubmit = async (e) => {
+    e.preventDefault();
+    try {
+      await api('/api/users', { method: 'POST', body: { name: form.name.value, password: form.password.value, admin: form.admin.checked } });
+      form.reset();
+      toast('ユーザーを追加しました');
+      load();
+    } catch (err) { toast(err.message); }
+  };
+
+  load();
+}
+
+// ---------- ログイン / 初回セットアップ ----------
+
+async function showAuth() {
+  cleanup?.();
+  cleanup = null;
+  document.body.classList.remove('playing');
+  document.body.classList.add('auth-mode');
+  const view = $('#view');
+  let st;
+  try {
+    st = await api('/api/auth/status');
+  } catch (err) {
+    view.innerHTML = `<div class="empty"><h2>サーバーに接続できません</h2><p>${esc(err.message)}</p></div>`;
+    return;
+  }
+  if (st.user) return enterApp(st.user);
+
+  if (st.setup && !st.canSetup) {
+    view.innerHTML = `<div class="auth-box">
+      <div class="logo big"><span class="logo-mark">▶</span>Micol</div>
+      <h2>初期設定がまだです</h2>
+      <p class="muted">最初の管理者アカウントは、セキュリティのため<strong>サーバーと同じネットワーク（LAN）内</strong>から作成する必要があります。<br>
+      サーバー PC か、同じ LAN の PC で <code>http://サーバーのIP:8420</code> を開いてください。</p>
+    </div>`;
+    return;
+  }
+
+  const setup = st.setup;
+  view.innerHTML = `<form class="auth-box" id="auth-form">
+    <div class="logo big"><span class="logo-mark">▶</span>Micol</div>
+    <h2>${setup ? '管理者アカウントを作成' : 'ログイン'}</h2>
+    ${setup ? '<p class="muted">最初のユーザーが管理者になります。あとから設定画面でユーザーを追加できます。</p>' : ''}
+    <label class="field"><span>ユーザー名</span><input name="name" required maxlength="32" autocomplete="username" autofocus></label>
+    <label class="field"><span>パスワード${setup ? '（8 文字以上）' : ''}</span><input name="password" type="password" required ${setup ? 'minlength="8" autocomplete="new-password"' : 'autocomplete="current-password"'}></label>
+    ${setup ? '<label class="field"><span>パスワード（確認）</span><input name="confirm" type="password" required minlength="8" autocomplete="new-password"></label>' : ''}
+    <button class="btn primary">${setup ? '作成してはじめる' : 'ログイン'}</button>
+  </form>`;
+  const form = $('#auth-form', view);
+  form.onsubmit = async (e) => {
+    e.preventDefault();
+    if (setup && form.password.value !== form.confirm.value) return toast('パスワードが一致しません');
+    const btn = $('button', form);
+    btn.disabled = true;
+    try {
+      const r = await api(setup ? '/api/auth/setup' : '/api/auth/login', {
+        method: 'POST',
+        body: { name: form.name.value, password: form.password.value },
+      });
+      enterApp(r.user);
+    } catch (err) {
+      toast(err.message, 5000);
+      btn.disabled = false;
+      form.password.select();
+    }
+  };
+}
+
+function enterApp(user) {
+  me = user;
+  document.body.classList.remove('auth-mode');
+  router();
+}
+
+async function boot() {
+  try {
+    const st = await api('/api/auth/status');
+    if (st.user) return enterApp(st.user);
+  } catch {}
+  showAuth();
+}
