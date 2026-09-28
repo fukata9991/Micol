@@ -150,11 +150,16 @@ body.playing main { padding: 0; max-width: none; }
 .form-row { display: flex; gap: 10px; flex-wrap: wrap; align-items: end; margin-bottom: 12px; }
 .field { display: flex; flex-direction: column; gap: 4px; font-size: 13px; color: var(--muted); }
 .field.grow { flex: 1; min-width: 200px; }
-.field input, .field select {
+.field input, .field select, .field textarea {
   padding: 8px 12px; border-radius: 8px; border: 1px solid var(--border);
   background: var(--bg); outline: none; color: var(--text); min-width: 0;
 }
-.field input:focus, .field select:focus { border-color: var(--accent); }
+.field input:focus, .field select:focus, .field textarea:focus { border-color: var(--accent); }
+.field textarea { font: inherit; resize: vertical; }
+.nfo-form { max-height: 90vh; }
+.nfo-fields { overflow-y: auto; margin: 0 -4px 12px; padding: 0 4px; }
+.nfo-fields .form-row { margin-bottom: 10px; }
+.nfo-fields .hint { margin: 0 0 10px; }
 .hint { font-size: 13px; color: var(--muted); margin: 6px 0 0; }
 
 .modal { position: fixed; inset: 0; z-index: 50; background: rgba(0,0,0,.6); display: grid; place-items: center; padding: 16px; }
@@ -259,6 +264,7 @@ input[type=range].seek:hover::-webkit-slider-thumb { margin-top: -4px; }
 .folder-nfo .meta { margin-top: 0; }
 .detail h1 .ep { color: var(--accent); font-size: .75em; margin-right: 10px; vertical-align: middle; }
 .thumb-edit { margin-top: 10px; }
+.thumb-edit + .thumb-edit { margin-left: 6px; }
 
 /* ---------- サムネイル変更 ---------- */
 .modal-box.wide { width: min(720px, 100%); }

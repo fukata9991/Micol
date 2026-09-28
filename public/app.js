@@ -130,6 +130,7 @@ function nfoBlock(nfo, { people = false } = {}) {
         ['監督', nfo.directors?.join(', ')],
         ['制作', nfo.studios?.join(', ')],
         ['出演', nfo.actors?.join(', ')],
+        ['タグ', nfo.tags?.join(', ')],
       ].filter(([, v]) => v)
     : [];
   return `<div class="nfo">
@@ -284,7 +285,7 @@ async function renderItem(view, id) {
     <div class="detail">
       <div>
         <div class="detail-thumb">${thumbImg(thumbUrl(it), false)}</div>
-        ${me.admin ? '<button class="btn small thumb-edit" id="edit-thumb">🖼 サムネイルを変更</button>' : ''}
+        ${me.admin ? '<button class="btn small thumb-edit" id="edit-thumb">🖼 サムネイルを変更</button><button class="btn small thumb-edit" id="edit-nfo">✎ メタデータを編集</button>' : ''}
       </div>
       <div>
         ${it.nfo?.showTitle ? `<div class="muted">${esc(it.nfo.showTitle)}</div>` : ''}
@@ -323,6 +324,77 @@ async function renderItem(view, id) {
   if (me.admin) $('#edit-thumb', view).onclick = async () => {
     if (await thumbEditor(it)) router();
   };
+  if (me.admin) $('#edit-nfo', view).onclick = async () => {
+    if (await nfoEditor(it)) router();
+  };
+}
+
+/** メタデータ（NFO）の編集ダイアログ。保存したら true を返す */
+function nfoEditor(it) {
+  const n = it.nfo || {};
+  const list = (a) => (a || []).join(', ');
+  const text = (name, label, value, attrs = '') =>
+    `<label class="field ${attrs.includes('grow') ? 'grow' : ''}">${label}<input name="${name}" value="${esc(value ?? '')}" ${attrs.replace('grow', '')}></label>`;
+  // 保存先は常に .nfo\動画名.nfo（別の場所の NFO を使っていた場合はその内容を引き継ぐ）
+  const target = `${it.path.replace(/[^\\/]+$/, '')}.nfo\\${it.file.replace(/\.[^.]+$/, '')}.nfo`;
+  const note = !it.nfoPath ? '（新規作成）' : it.nfoPath.toLowerCase() === target.toLowerCase() ? '' : `（${it.nfoPath} の内容を引き継ぎます）`;
+  return new Promise((resolve) => {
+    const modal = document.createElement('div');
+    modal.className = 'modal';
+    modal.innerHTML = `<form class="modal-box wide nfo-form" role="dialog" aria-label="メタデータを編集">
+      <h3>メタデータを編集</h3>
+      <div class="nfo-fields">
+        <div class="form-row">${text('title', 'タイトル', n.title ?? it.name, 'grow')}</div>
+        <div class="form-row">${text('originalTitle', '原題', n.originalTitle, 'grow')}${text('sortTitle', '並べ替え用タイトル', n.sortTitle, 'grow')}</div>
+        <div class="form-row">
+          ${text('year', '年', n.year, 'inputmode="numeric" size="6"')}
+          ${text('premiered', '公開日 (2024-01-31)', n.premiered, 'size="12"')}
+          ${text('season', 'シーズン', n.season, 'inputmode="numeric" size="5"')}
+          ${text('episode', '話数', n.episode, 'inputmode="numeric" size="5"')}
+          ${text('rating', '評価 (0〜10)', n.rating, 'inputmode="decimal" size="6"')}
+          ${text('mpaa', '年齢制限', n.mpaa, 'size="8"')}
+        </div>
+        <div class="form-row">${text('tagline', 'キャッチコピー', n.tagline, 'grow')}</div>
+        <div class="form-row"><label class="field grow">あらすじ<textarea name="plot" rows="5">${esc(n.plot || '')}</textarea></label></div>
+        <p class="hint">以下は複数ある場合、カンマ（, または 、）で区切って入力します</p>
+        <div class="form-row">${text('genres', 'ジャンル', list(n.genres), 'grow')}${text('tags', 'タグ', list(n.tags), 'grow')}</div>
+        <div class="form-row">${text('studios', '制作', list(n.studios), 'grow')}${text('directors', '監督', list(n.directors), 'grow')}</div>
+        <div class="form-row">${text('actors', '出演', list(n.actors), 'grow')}</div>
+        <p class="hint">保存先: ${esc(target + note)}</p>
+      </div>
+      <div class="modal-actions">
+        <span class="spacer"></span>
+        <button type="button" class="btn" data-act="cancel">キャンセル</button>
+        <button type="submit" class="btn primary">保存</button>
+      </div>
+    </form>`;
+    document.body.append(modal);
+    const form = $('form', modal);
+    const close = (changed) => {
+      modal.remove();
+      resolve(changed);
+    };
+    modal.addEventListener('click', (e) => {
+      if (e.target === modal || e.target.closest('[data-act="cancel"]')) close(false);
+    });
+    form.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const f = new FormData(form);
+      const body = {};
+      for (const k of ['title', 'originalTitle', 'sortTitle', 'year', 'premiered', 'season', 'episode', 'rating', 'mpaa', 'tagline', 'plot']) body[k] = f.get(k);
+      for (const k of ['genres', 'tags', 'studios', 'directors', 'actors']) body[k] = String(f.get(k)).split(/[,、，]/).map((s) => s.trim()).filter(Boolean);
+      form.querySelectorAll('button, input, textarea').forEach((b) => { b.disabled = true; });
+      try {
+        await api(`/api/items/${it.id}/nfo`, { method: 'PUT', body });
+        toast('メタデータを保存しました');
+        close(true);
+      } catch (err) {
+        toast(`保存できませんでした: ${err.message}`, 6000);
+        form.querySelectorAll('button, input, textarea').forEach((b) => { b.disabled = false; });
+      }
+    });
+    $('input[name="title"]', modal).focus();
+  });
 }
 
 /** サムネイル変更ダイアログ。変更したら true を返す */

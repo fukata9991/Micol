@@ -64,9 +64,143 @@ export async function readNfo(file, baseDir = path.dirname(file)) {
     genres: unique(all(body, 'genre').flatMap((g) => g.split(/\s*[/|]\s*/))),
     studios: unique(all(body, 'studio')),
     directors: unique(all(body, 'director')),
+    tags: unique(all(body, 'tag')),
     actors,
     thumb,
   });
+}
+
+// ---------- 書き込み ----------
+
+// 編集できる項目: 画面での名前 -> NFO のタグ
+const TEXT_FIELDS = {
+  title: 'title', originalTitle: 'originaltitle', sortTitle: 'sorttitle', tagline: 'tagline', plot: 'plot',
+  year: 'year', premiered: 'premiered', season: 'season', episode: 'episode', rating: 'rating', mpaa: 'mpaa',
+};
+const LIST_FIELDS = { genres: 'genre', studios: 'studio', directors: 'director', tags: 'tag' };
+const NUM_FIELDS = { year: ['年', 1800, 2999, true], season: ['シーズン', 0, 9999, true], episode: ['話数', 0, 99999, true], rating: ['評価', 0, 10, false] };
+
+/**
+ * 画面から送られた値を検証して、NFO に書く形にそろえる。
+ * 送られてこなかった項目は含めない（その項目は NFO を変更しない）。
+ */
+export function nfoFields(body) {
+  const out = {};
+  for (const key of Object.keys(TEXT_FIELDS)) {
+    if (!(key in body)) continue;
+    let v = body[key] == null ? '' : String(body[key]).trim();
+    if (v && key in NUM_FIELDS) {
+      const [label, min, max, int] = NUM_FIELDS[key];
+      const n = Number(v);
+      if (!Number.isFinite(n) || n < min || n > max || (int && !Number.isInteger(n))) {
+        throw new Error(`${label}は ${min}〜${max} の${int ? '整数' : '数値'}で入力してください: ${v}`);
+      }
+      v = String(n);
+    }
+    if (key === 'premiered' && v && !/^\d{4}(-\d{2}(-\d{2})?)?$/.test(v)) throw new Error(`日付は 2024-01-31 の形式で入力してください: ${v}`);
+    out[key] = v;
+  }
+  for (const key of [...Object.keys(LIST_FIELDS), 'actors']) {
+    if (!(key in body)) continue;
+    const arr = Array.isArray(body[key]) ? body[key] : [];
+    out[key] = unique(arr.map((x) => String(x).trim()));
+  }
+  return out;
+}
+
+/**
+ * NFO に値を書き込む。既存の NFO は指定した項目だけを置き換え、それ以外（<art> や <fileinfo> など）は残す。
+ * file が無い場合は seed（movie.nfo など）の内容をもとにするか、新しく作る。UTF-8（BOM 付き）で保存する。
+ */
+export async function writeNfo(file, fields, { seed = null } = {}) {
+  const src = fss.existsSync(file) ? file : seed && fss.existsSync(seed) ? seed : null;
+  let xml = src
+    ? decode(await fs.readFile(src))
+    : '<?xml version="1.0" encoding="utf-8" standalone="yes"?>\n<movie>\n</movie>\n';
+  xml = xml.replace(/^(<\?xml[^>]*encoding=)(["'])[^"']*\2/i, '$1$2utf-8$2');
+  const nl = xml.includes('\r\n') ? '\r\n' : '\n';
+
+  const root = /<(movie|episodedetails|tvshow|season|musicvideo)(\s[^>]*)?(\/?)>/i.exec(xml);
+  if (!root) throw new Error('NFO の形式が正しくありません');
+  if (root[3]) xml = xml.slice(0, root.index) + `<${root[1]}${root[2] || ''}></${root[1]}>` + xml.slice(root.index + root[0].length);
+  const bodyStart = root.index + xml.slice(root.index).indexOf('>') + 1;
+  const bodyEnd = xml.toLowerCase().lastIndexOf(`</${root[1].toLowerCase()}>`);
+  if (bodyEnd < bodyStart) throw new Error('NFO の形式が正しくありません');
+  const body = xml.slice(bodyStart, bodyEnd);
+  const indent = /\n([ \t]+)</.exec(body)?.[1] ?? '  ';
+
+  // タグ名 -> 置き換え後の要素（空なら削除）。追加する場合はこの順で末尾に並ぶ
+  const plan = new Map();
+  const el = (tag, v) => `<${tag}>${escapeXml(v)}</${tag}>`;
+  for (const [key, tag] of Object.entries(TEXT_FIELDS)) if (key in fields) plan.set(tag, fields[key] ? [el(tag, fields[key])] : []);
+  for (const [key, tag] of Object.entries(LIST_FIELDS)) if (key in fields) plan.set(tag, fields[key].map((v) => el(tag, v)));
+  if ('actors' in fields) {
+    // 既にいる出演者は役名・画像などをそのまま残す
+    const kept = new Map();
+    for (const c of children(body)) {
+      if (c.name !== 'actor') continue;
+      const block = body.slice(c.start, c.end);
+      const name = all(block, 'name')[0];
+      if (name && !kept.has(name)) kept.set(name, block);
+    }
+    plan.set('actor', fields.actors.map((n) => kept.get(n) ?? `<actor>${nl}${indent}${indent}${el('name', n)}${nl}${indent}</actor>`));
+  }
+
+  let out = '';
+  let pos = 0;
+  const placed = new Set();
+  for (const c of children(body)) {
+    if (!plan.has(c.name)) continue;
+    // 要素とその行頭の空白・改行を取り除き、同じタグの最初の位置に新しい要素を入れる
+    let s = c.start;
+    while (s > pos && /[ \t]/.test(body[s - 1])) s--;
+    if (s > pos && body[s - 1] === '\n') s -= s - 1 > pos && body[s - 2] === '\r' ? 2 : 1;
+    out += body.slice(pos, s);
+    if (!placed.has(c.name)) {
+      placed.add(c.name);
+      out += plan.get(c.name).map((e) => nl + indent + e).join('');
+    }
+    pos = c.end;
+  }
+  out += body.slice(pos);
+  const rest = [...plan].filter(([tag]) => !placed.has(tag)).flatMap(([, els]) => els);
+  if (rest.length) out = out.replace(/\s*$/, '') + rest.map((e) => nl + indent + e).join('') + nl;
+  if (!/\S/.test(out)) out = nl;
+  xml = xml.slice(0, bodyStart) + out + xml.slice(bodyEnd);
+
+  await fs.mkdir(path.dirname(file), { recursive: true });
+  const tmp = path.join(path.dirname(file), `.${path.basename(file)}.${process.pid}.tmp`);
+  await fs.writeFile(tmp, Buffer.concat([Buffer.from([0xef, 0xbb, 0xbf]), Buffer.from(xml, 'utf8')]));
+  await fs.rename(tmp, file);
+}
+
+/** ルート要素の直下の子要素の位置（タグ名は小文字） */
+function children(xml) {
+  const out = [];
+  const re = /<!--[\s\S]*?-->|<!\[CDATA\[[\s\S]*?\]\]>|<\?[\s\S]*?\?>|<(\/?)([A-Za-z_][\w.:-]*)(?:\s[^>]*?)?(\/?)>/g;
+  let depth = 0;
+  let cur = null;
+  for (const m of xml.matchAll(re)) {
+    if (!m[2]) continue;
+    const end = m.index + m[0].length;
+    if (m[1]) {
+      depth--;
+      if (depth === 0 && cur) {
+        out.push({ ...cur, end });
+        cur = null;
+      }
+    } else if (m[3]) {
+      if (depth === 0) out.push({ name: m[2].toLowerCase(), start: m.index, end });
+    } else {
+      if (depth === 0) cur = { name: m[2].toLowerCase(), start: m.index };
+      depth++;
+    }
+  }
+  return out;
+}
+
+function escapeXml(s) {
+  return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 }
 
 function decode(buf) {

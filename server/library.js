@@ -4,7 +4,7 @@ import path from 'node:path';
 import crypto from 'node:crypto';
 import { JsonStore, naturalCompare } from './store.js';
 import { probeFile } from './probe.js';
-import { readNfo } from './nfo.js';
+import { readNfo, writeNfo } from './nfo.js';
 
 export const VIDEO_EXT = new Set([
   '.mp4', '.m4v', '.mkv', '.webm', '.mov', '.avi', '.wmv', '.flv',
@@ -191,6 +191,7 @@ export class Library {
       added: prev?.added ?? (st.birthtimeMs || st.mtimeMs),
       image,
       imageMtime,
+      nfoPath: nfoFile,
       // .thumbs に置かれた画像か（画面から設定・削除できるのはこちらだけ）
       sideImage: !!sideImage,
       thumbsDir: path.join(dir, SIDE_DIRS.thumbs),
@@ -200,6 +201,24 @@ export class Library {
       nfo,
       probe: same && prev.probe && !prev.probe.failed ? prev.probe : null,
     };
+  }
+
+  /**
+   * 画面で編集したメタデータを .nfo/動画名.nfo に保存する。
+   * 別の場所の NFO（動画の隣の 動画名.nfo や movie.nfo）を使っていた場合は、その内容をもとに作る。
+   * 動画の隣の 動画名.nfo は .nfo に移したことになるので削除する（movie.nfo は他の用途もあるので残す）。
+   */
+  async saveNfo(it, fields) {
+    const dir = path.dirname(it.path);
+    const file = path.join(dir, SIDE_DIRS.nfo, `${it.base}.nfo`);
+    const old = it.nfoPath && path.resolve(it.nfoPath).toLowerCase() !== path.resolve(file).toLowerCase() ? it.nfoPath : null;
+    await writeNfo(file, fields, { seed: old });
+    if (old && path.basename(old).toLowerCase() === `${it.base}.nfo`.toLowerCase()) await fs.rm(old, { force: true });
+    it.nfoPath = file;
+    it.nfo = await readNfo(file, dir);
+    it.name = it.nfo?.title || it.base;
+    if (!it.sideImage && it.nfo?.thumb && !it.image) it.image = it.nfo.thumb;
+    return file;
   }
 
   persistItem(it) {

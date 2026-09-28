@@ -6,6 +6,7 @@ import crypto from 'node:crypto';
 import { execFile, execFileSync } from 'node:child_process';
 import { JsonStore, HttpError, ROOT } from './store.js';
 import { Library } from './library.js';
+import { nfoFields } from './nfo.js';
 import { Media } from './media.js';
 import { Auth, isDirectLan } from './auth.js';
 
@@ -203,6 +204,7 @@ route('GET', '/api/items/:id', async ({ params, prog }) => {
     path: it.path,
     container: it.ext.slice(1),
     nfo: it.nfo || null,
+    nfoPath: it.nfoPath || null,
     customThumb: !!it.sideImage,
     video: probe?.video || null,
     audio: probe?.audio || [],
@@ -235,6 +237,23 @@ route('DELETE', '/api/items/:id/thumb', ({ params }) => {
   const it = getItem(params.id);
   media.clearCustomThumb(it);
   return { ok: true, thumb: media.thumbVersion(it) };
+}, 'admin');
+
+// メタデータを NFO に保存する（送られた項目だけを書き換える）
+route('PUT', '/api/items/:id/nfo', async ({ params, body }) => {
+  const it = getItem(params.id);
+  let fields;
+  try {
+    fields = nfoFields(body || {});
+  } catch (e) {
+    throw new HttpError(400, e.message);
+  }
+  try {
+    const file = await library.saveNfo(it, fields);
+    return { ok: true, file };
+  } catch (e) {
+    throw new HttpError(500, `NFO を保存できません: ${e.message}`);
+  }
 }, 'admin');
 
 // シークバーのプレビュー。無ければバックグラウンドで生成を始め、{ pending: true } を返す
