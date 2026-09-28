@@ -71,7 +71,14 @@ const CAPS = (() => {
 
 // ---------- 部品 ----------
 
-const onImgError = `onerror="this.classList.add('broken')"`;
+/**
+ * サムネイル画像。見切れないよう全体を枠に収め（contain）、
+ * 余白は同じ画像をぼかして敷く（同じ URL なので読み込みは 1 回）
+ */
+function thumbImg(src, lazy = true) {
+  const l = lazy ? 'loading="lazy" ' : '';
+  return `<img class="thumb-bg" ${l}src="${src}" alt="" aria-hidden="true"><img class="thumb-img" ${l}src="${src}" alt="" onerror="this.parentElement.classList.add('noimg')">`;
+}
 
 const thumbUrl = (it) => `/api/items/${it.id}/thumb?v=${it.thumb}`;
 
@@ -85,7 +92,7 @@ function itemCard(it, sub = '') {
   sub = sub || [episodeLabel(it), it.year].filter(Boolean).join(' ・ ');
   return `<a class="card" href="#/item/${it.id}">
     <div class="thumb">
-      <img loading="lazy" src="${thumbUrl(it)}" alt="" ${onImgError}>
+      ${thumbImg(thumbUrl(it))}
       ${it.watched ? '<span class="badge" title="視聴済み">✓</span>' : ''}
       ${it.duration ? `<span class="dur">${fmtTime(it.duration)}</span>` : ''}
       <button class="play-overlay" data-play="${it.id}" title="再生" aria-label="再生">▶</button>
@@ -99,7 +106,7 @@ function itemCard(it, sub = '') {
 function folderCard(f) {
   return `<a class="card folder" href="#/folder/${f.id}">
     <div class="thumb">
-      <img loading="lazy" src="/api/folders/${f.id}/thumb" alt="" ${onImgError}>
+      ${thumbImg(`/api/folders/${f.id}/thumb`)}
       <span class="badge count">${f.count}</span>
     </div>
     <div class="card-title" title="${esc(f.name)}">${esc(f.name)}</div>
@@ -140,6 +147,21 @@ function crumbs(list) {
     .map((c) => `<span class="sep">›</span><a href="#/folder/${c.id}">${esc(c.name)}</a>`)
     .join('')}</nav>`;
 }
+
+const SIZES = ['s', 'm', 'l'];
+function setCardSize(size) {
+  if (!SIZES.includes(size)) size = 'm';
+  document.body.dataset.size = size;
+  document.querySelectorAll('.size-toggle button').forEach((b) => b.setAttribute('aria-pressed', String(b.dataset.size === size)));
+  try { localStorage.setItem('micol.cardSize', size); } catch {}
+}
+let savedSize = 'm';
+try { savedSize = localStorage.getItem('micol.cardSize') || 'm'; } catch {}
+setCardSize(savedSize);
+document.querySelector('.size-toggle').addEventListener('click', (e) => {
+  const b = e.target.closest('[data-size]');
+  if (b) setCardSize(b.dataset.size);
+});
 
 // カード上の再生ボタン（リンク内のボタンなので伝播を止める）
 document.addEventListener('click', (e) => {
@@ -261,7 +283,7 @@ async function renderItem(view, id) {
     ${crumbs(it.breadcrumbs)}
     <div class="detail">
       <div>
-        <div class="detail-thumb"><img src="${thumbUrl(it)}" alt="" ${onImgError}></div>
+        <div class="detail-thumb">${thumbImg(thumbUrl(it), false)}</div>
         ${me.admin ? '<button class="btn small thumb-edit" id="edit-thumb">🖼 サムネイルを変更</button>' : ''}
       </div>
       <div>
