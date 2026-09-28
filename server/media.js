@@ -1,13 +1,16 @@
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import { spawn, execFile } from 'node:child_process';
-import { CACHE_DIR, DATA_DIR, HttpError } from './store.js';
+import { CACHE_DIR, HttpError } from './store.js';
+import { SIDE_DIRS } from './library.js';
 
 const THUMB_DIR = path.join(CACHE_DIR, 'thumbs');
 const SUB_DIR = path.join(CACHE_DIR, 'subs');
-// ユーザーが設定したサムネイル（キャッシュではないので cache/ の外に置く）
-const CUSTOM_DIR = path.join(DATA_DIR, 'thumbs-custom');
-fs.mkdirSync(CUSTOM_DIR, { recursive: true });
+const UPLOAD_DIR = path.join(CACHE_DIR, 'uploads');
+fs.mkdirSync(UPLOAD_DIR, { recursive: true });
+// 生成するトリックプレイ（Jellyfin と同じ形式: 幅 320px・10x10 コマ・10 秒間隔）
+const TRICKPLAY = { width: 320, cols: 10, rows: 10, interval: 10 };
 
 export const TEXT_SUBS = new Set(['subrip', 'srt', 'ass', 'ssa', 'webvtt', 'mov_text', 'text']);
 // ブラウザがそのまま再生できる音声（MP4 へのコピーも可能なもの）
@@ -27,12 +30,11 @@ export class Media {
     this.thumbWaiters = [];
     this.subJobs = new Map();
     this.encoders = ['libx264'];
-    // id -> 更新時刻（画像 URL のキャッシュ回避用）
-    this.custom = new Map();
-    for (const f of fs.readdirSync(CUSTOM_DIR)) {
-      const m = /^([0-9a-f]{16})\.jpg$/.exec(f);
-      if (m) this.custom.set(m[1], Math.round(fs.statSync(path.join(CUSTOM_DIR, f)).mtimeMs));
-    }
+    this.trickplayInfos = new Map(); // トリックプレイのフォルダ -> 情報
+    this.trickplayQueue = [];
+    this.trickplayPending = new Set();
+    this.trickplayFailed = new Set();
+    this.trickplayRunning = false;
   }
 
   get ffmpeg() {
@@ -220,11 +222,10 @@ export class Media {
 
   /** 画像 URL に付けるバージョン（サムネイルが変わると値が変わる） */
   thumbVersion(item) {
-    return this.custom.get(item.id) ?? Math.round(item.mtime);
+    return Math.round(item.imageMtime || item.mtime);
   }
 
   itemThumb(item) {
-    if (this.custom.has(item.id)) return Promise.resolve(path.join(CUSTOM_DIR, `${item.id}.jpg`));
     if (item.image) return Promise.resolve(item.image);
     const out = path.join(THUMB_DIR, `${item.id}_${Math.round(item.mtime)}.jpg`);
     if (fs.existsSync(out)) return Promise.resolve(out);
@@ -265,12 +266,18 @@ export class Media {
     res.on('close', () => proc.kill());
   }
 
+  /** 動画フォルダの .thumbs/動画名.jpg に保存する（既にあれば上書き） */
   async setCustomThumb(item, { t, image }) {
-    const out = path.join(CUSTOM_DIR, `${item.id}.jpg`);
-    const tmp = path.join(CUSTOM_DIR, `${item.id}.tmp.jpg`);
+    const out = path.join(item.thumbsDir, `${item.base}.jpg`);
+    const tmp = path.join(item.thumbsDir, `.${item.id}.tmp.jpg`);
+    try {
+      fs.mkdirSync(item.thumbsDir, { recursive: true });
+    } catch (e) {
+      throw new HttpError(500, `フォルダを作成できません: ${item.thumbsDir} (${e.message})`);
+    }
     const scale = ['-vf', "scale='min(1280,iw)':-2", '-q:v', '3', '-frames:v', '1', '-update', '1'];
     if (image) {
-      const src = path.join(CUSTOM_DIR, `${item.id}.upload`);
+      const src = path.join(UPLOAD_DIR, `${item.id}.upload`);
       fs.writeFileSync(src, image);
       try {
         await this.run(this.ffmpeg, ['-hide_banner', '-loglevel', 'error', '-y', '-i', src, ...scale, tmp], 30000);
@@ -286,12 +293,146 @@ export class Media {
     }
     if (!fs.existsSync(tmp)) throw new HttpError(500, 'サムネイルを作成できませんでした');
     fs.renameSync(tmp, out);
-    this.custom.set(item.id, Date.now());
+    item.image = out;
+    item.sideImage = true;
+    item.imageMtime = Date.now();
   }
 
+  /** .thumbs の画像を削除して自動生成に戻す（隣の画像や NFO の画像があれば再スキャン後にそちらを使う） */
   clearCustomThumb(item) {
-    fs.rmSync(path.join(CUSTOM_DIR, `${item.id}.jpg`), { force: true });
-    this.custom.delete(item.id);
+    if (!item.sideImage) return;
+    fs.rmSync(item.image, { force: true });
+    item.image = null;
+    item.sideImage = false;
+    item.imageMtime = 0;
+  }
+
+  // ---------- トリックプレイ（シークバーのプレビュー） ----------
+
+  /**
+   * Jellyfin 形式（動画名.trickplay/<幅> - <列>x<行>/<n>.jpg）のタイル画像の情報。
+   * 無ければ null を返し、generate が true ならバックグラウンドで生成を始める。
+   */
+  async trickplay(item, generate = false) {
+    const info = item.trickplay && (await this.trickplayInfo(item));
+    if (info) return info;
+    if (generate) this.queueTrickplay(item);
+    return null;
+  }
+
+  async trickplayInfo(item) {
+    const cached = this.trickplayInfos.get(item.trickplay);
+    if (cached) return cached;
+    let subs = [];
+    try {
+      subs = (await fs.promises.readdir(item.trickplay, { withFileTypes: true })).filter((e) => e.isDirectory());
+    } catch {
+      return null;
+    }
+    const layouts = subs
+      .map((e) => ({ dir: e.name, m: /^(\d+) - (\d+)x(\d+)$/.exec(e.name) }))
+      .filter((x) => x.m)
+      .map((x) => ({ dir: x.dir, width: Number(x.m[1]), cols: Number(x.m[2]), rows: Number(x.m[3]) }))
+      .sort((a, b) => Math.abs(a.width - TRICKPLAY.width) - Math.abs(b.width - TRICKPLAY.width));
+    const layout = layouts[0];
+    if (!layout) return null;
+
+    const sheetDir = path.join(item.trickplay, layout.dir);
+    let sheets = 0;
+    try {
+      sheets = (await fs.promises.readdir(sheetDir)).filter((f) => /^\d+\.jpg$/i.test(f)).length;
+    } catch {}
+    const size = sheets ? jpegSize(await fs.promises.readFile(path.join(sheetDir, '0.jpg')).catch(() => null)) : null;
+    if (!size) return null;
+
+    const per = layout.cols * layout.rows;
+    const duration = (await this.library.ensureProbe(item).catch(() => null))?.duration || 0;
+    // Jellyfin の既定は 10 秒間隔。コマ数が足りない場合は動画の長さから間隔を割り出す
+    let interval = TRICKPLAY.interval;
+    if (duration && sheets * per * interval < duration - interval) interval = duration / (sheets * per);
+    const info = {
+      dir: layout.dir,
+      width: Math.round(size.width / layout.cols),
+      height: Math.round(size.height / layout.rows),
+      cols: layout.cols,
+      rows: layout.rows,
+      interval,
+      count: duration ? Math.min(sheets * per, Math.ceil(duration / interval)) : sheets * per,
+      sheets,
+    };
+    this.trickplayInfos.set(item.trickplay, info);
+    return info;
+  }
+
+  trickplaySheet(item, info, n) {
+    if (!Number.isInteger(n) || n < 0 || n >= info.sheets) throw new HttpError(404, 'トリックプレイがありません');
+    return path.join(item.trickplay, info.dir, `${n}.jpg`);
+  }
+
+  queueTrickplay(item) {
+    if (this.trickplayPending.has(item.id) || this.trickplayFailed.has(item.id)) return;
+    this.trickplayPending.add(item.id);
+    this.trickplayQueue.push(item);
+    this.pumpTrickplay();
+  }
+
+  async pumpTrickplay() {
+    if (this.trickplayRunning) return;
+    const item = this.trickplayQueue.shift();
+    if (!item) return;
+    this.trickplayRunning = true;
+    try {
+      await this.generateTrickplay(item);
+    } catch (e) {
+      this.trickplayFailed.add(item.id);
+      console.warn(`トリックプレイを生成できません: ${item.path} (${e.message})`);
+    } finally {
+      this.trickplayPending.delete(item.id);
+      this.trickplayRunning = false;
+      this.pumpTrickplay();
+    }
+  }
+
+  /** 動画フォルダの .trickplay/動画名.trickplay/ に生成する（キーフレームだけを読むので比較的軽い） */
+  async generateTrickplay(item) {
+    const { width, cols, rows, interval } = TRICKPLAY;
+    const root = path.join(path.dirname(item.path), SIDE_DIRS.trickplay);
+    const out = path.join(root, `${item.base}.trickplay`);
+    const tmp = path.join(root, `.${item.id}.tmp`);
+    const sheetDir = path.join(tmp, `${width} - ${cols}x${rows}`);
+    fs.rmSync(tmp, { recursive: true, force: true });
+    fs.mkdirSync(sheetDir, { recursive: true });
+    const started = Date.now();
+    try {
+      await new Promise((resolve, reject) => {
+        const proc = spawn(this.ffmpeg, [
+          '-hide_banner', '-loglevel', 'error', '-y', '-skip_frame', 'nokey', '-i', item.path,
+          '-an', '-sn', '-dn', '-map', '0:v:0',
+          '-vf', `fps=1/${interval},scale=${width}:-2,tile=${cols}x${rows}`,
+          '-q:v', '5', '-start_number', '0', path.join(sheetDir, '%d.jpg'),
+        ], { windowsHide: true, stdio: ['ignore', 'ignore', 'pipe'] });
+        // 再生やサムネイル生成の邪魔をしないよう優先度を下げる
+        try {
+          os.setPriority(proc.pid, os.constants.priority.PRIORITY_LOW);
+        } catch {}
+        let stderr = '';
+        proc.stderr.on('data', (d) => (stderr = (stderr + d).slice(-2000)));
+        const timer = setTimeout(() => proc.kill(), 60 * 60000);
+        proc.on('error', reject);
+        proc.on('close', (code) => {
+          clearTimeout(timer);
+          if (code === 0 && fs.existsSync(path.join(sheetDir, '0.jpg'))) resolve();
+          else reject(new Error(stderr.trim().split('\n').pop() || `ffmpeg code ${code}`));
+        });
+      });
+      fs.rmSync(out, { recursive: true, force: true });
+      fs.renameSync(tmp, out);
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+    item.trickplay = out;
+    this.trickplayInfos.delete(out);
+    console.log(`トリックプレイを生成しました (${Math.round((Date.now() - started) / 1000)}秒): ${item.path}`);
   }
 
   sendImage(res, file, maxAge = 3600) {
@@ -373,6 +514,29 @@ function encoderArgs(tc) {
   if (enc.includes('qsv')) return ['-c:v', enc, '-preset', 'veryfast', '-global_quality', q];
   if (enc.includes('amf')) return ['-c:v', enc, '-quality', 'speed', '-rc', 'cqp', '-qp_i', q, '-qp_p', q];
   return ['-c:v', 'libx264', '-preset', tc.preset || 'veryfast', '-crf', q];
+}
+
+/** JPEG の幅・高さを読む（SOF マーカーを探す） */
+function jpegSize(buf) {
+  if (!buf || buf[0] !== 0xff || buf[1] !== 0xd8) return null;
+  let i = 2;
+  while (i + 9 < buf.length) {
+    if (buf[i] !== 0xff) return null;
+    const m = buf[i + 1];
+    if (m === 0xff) {
+      i++;
+      continue;
+    }
+    if (m === 0x01 || (m >= 0xd0 && m <= 0xd7)) {
+      i += 2;
+      continue;
+    }
+    if (m >= 0xc0 && m <= 0xcf && m !== 0xc4 && m !== 0xc8 && m !== 0xcc) {
+      return { height: buf.readUInt16BE(i + 5), width: buf.readUInt16BE(i + 7) };
+    }
+    i += 2 + buf.readUInt16BE(i + 2);
+  }
+  return null;
 }
 
 /** UTF-8 でない字幕ファイル（日本語の Shift-JIS など）は文字コードを指定する */

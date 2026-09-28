@@ -5,8 +5,9 @@ import path from 'node:path';
 /**
  * Kodi / Jellyfin 形式の NFO を読み込む（必要な項目だけを正規表現で取り出す簡易パーサ）。
  * URL だけが書かれた NFO や壊れた XML の場合は null を返す。
+ * 相対パスの画像は baseDir（動画のフォルダ）基準で探す。
  */
-export async function readNfo(file) {
+export async function readNfo(file, baseDir = path.dirname(file)) {
   let buf;
   try {
     buf = await fs.readFile(file);
@@ -39,7 +40,12 @@ export async function readNfo(file) {
     .map((m) => all(m[1], 'name')[0])
     .filter(Boolean)
     .slice(0, 20);
-  const thumb = all(body, 'thumb').find((t) => !/^https?:/i.test(t)) || '';
+  // 画像: <art><landscape> → <thumb> → <art><poster> の順で、実在するローカルファイルを使う
+  const art = /<art[\s>][\s\S]*?<\/art>/i.exec(body)?.[0] || '';
+  const thumb = [...all(art, 'landscape'), ...all(body, 'thumb'), ...all(art, 'poster')]
+    .filter((t) => !/^https?:/i.test(t))
+    .map((t) => resolveLocal(baseDir, t))
+    .find(Boolean);
 
   return clean({
     kind: root[1].toLowerCase(),
@@ -59,8 +65,7 @@ export async function readNfo(file) {
     studios: unique(all(body, 'studio')),
     directors: unique(all(body, 'director')),
     actors,
-    // NFO 内のローカル画像（相対パスは NFO の場所基準）
-    thumb: thumb ? resolveLocal(path.dirname(file), thumb) : null,
+    thumb,
   });
 }
 

@@ -340,7 +340,7 @@ function thumbEditor(it) {
       </div>` : ''}
       <div class="modal-actions">
         <label class="btn">画像ファイルを選択…<input type="file" accept="image/jpeg,image/png,image/webp" hidden></label>
-        ${it.customThumb ? '<button class="btn danger" data-act="reset">自動に戻す</button>' : ''}
+        ${it.customThumb ? '<button class="btn danger" data-act="reset">画像を削除</button>' : ''}
         <span class="spacer"></span>
         <button class="btn" data-act="cancel">キャンセル</button>
         ${dur ? '<button class="btn primary" data-act="frame" disabled>この場面に設定</button>' : ''}
@@ -394,7 +394,9 @@ function thumbEditor(it) {
       if (e.target === modal) return close(false);
       const act = e.target.closest('[data-act]')?.dataset.act;
       if (act === 'cancel') close(false);
-      if (act === 'reset') save(() => fetch(`/api/items/${it.id}/thumb`, { method: 'DELETE' }), '自動のサムネイルに戻しました');
+      if (act === 'reset' && confirm('.thumbs フォルダのサムネイル画像を削除して、自動生成に戻しますか？\n（削除した画像は元に戻せません）')) {
+        save(() => fetch(`/api/items/${it.id}/thumb`, { method: 'DELETE' }), 'サムネイル画像を削除しました');
+      }
       if (act === 'frame') {
         save(() => fetch(`/api/items/${it.id}/thumb`, {
           method: 'PUT',
@@ -468,6 +470,7 @@ async function renderPlayer(view, id, params, seq) {
         ${me.admin ? `<button class="pbtn" data-a="snap" title="この場面をサムネイルに設定">${ICON.snap}</button>` : ''}
       </div>
       <div class="ctl ctl-bottom">
+        <div class="trick" hidden><div class="trick-img"></div><span class="trick-time"></span></div>
         <input type="range" class="seek" min="0" max="0" step="0.1" value="0" aria-label="再生位置">
         <div class="ctl-row">
           <button class="pbtn" data-a="pp" title="再生/一時停止 (Space)">${ICON.play}</button>
@@ -708,8 +711,56 @@ async function renderPlayer(view, id, params, seq) {
   if (it.next) btn('next').onclick = () => location.replace(`#/play/${it.next.id}?t=0`);
   volEl.oninput = () => setVolume(Number(volEl.value));
 
-  seekEl.addEventListener('input', () => { dragging = true; poke(); });
-  seekEl.addEventListener('change', () => { dragging = false; seek(Number(seekEl.value)); });
+  seekEl.addEventListener('input', () => { dragging = true; poke(); showTrick(Number(seekEl.value)); });
+  seekEl.addEventListener('change', () => { dragging = false; hideTrick(); seek(Number(seekEl.value)); });
+
+  // --- シークバーのプレビュー（トリックプレイ） ---
+  const trickEl = $('.trick', player);
+  const trickImg = $('.trick-img', player);
+  let trick = null;
+  let trickRetry;
+  async function loadTrick() {
+    try {
+      const d = await api(`/api/items/${id}/trickplay`);
+      if (!alive) return;
+      if (d.sheets) trick = d;
+      // 生成中なら少し待ってから確認し直す
+      else if (d.pending) trickRetry = setTimeout(loadTrick, 20000);
+    } catch {}
+  }
+  function showTrick(t) {
+    const d = duration();
+    if (!trick || !d) return;
+    const i = Math.max(0, Math.min(trick.count - 1, Math.floor(t / trick.interval)));
+    const per = trick.cols * trick.rows;
+    const sheet = Math.floor(i / per);
+    const k = i % per;
+    // 画面幅に合わせて縮小（最大はタイルの実寸）
+    const w = Math.min(trick.width, Math.round(player.clientWidth * 0.4));
+    const scale = w / trick.width;
+    const h = Math.round(trick.height * scale);
+    trickImg.style.width = `${w}px`;
+    trickImg.style.height = `${h}px`;
+    trickImg.style.backgroundImage = `url("/api/items/${id}/trickplay/${sheet}?v=${trick.v}")`;
+    trickImg.style.backgroundSize = `${trick.width * trick.cols * scale}px ${trick.height * trick.rows * scale}px`;
+    trickImg.style.backgroundPosition = `${-(k % trick.cols) * w}px ${-Math.floor(k / trick.cols) * h}px`;
+    $('.trick-time', trickEl).textContent = fmtTime(t);
+    // シークバー上の位置に合わせて表示（左右ははみ出さないように）
+    const bar = seekEl.getBoundingClientRect();
+    const box = trickEl.parentElement.getBoundingClientRect();
+    const x = bar.left - box.left + (t / d) * bar.width;
+    trickEl.style.left = `${Math.max(0, Math.min(box.width - w, x - w / 2))}px`;
+    trickEl.style.bottom = `${box.bottom - bar.top + 8}px`;
+    trickEl.hidden = false;
+  }
+  const hideTrick = () => { trickEl.hidden = true; };
+  seekEl.addEventListener('pointermove', (e) => {
+    if (dragging || e.pointerType === 'touch') return;
+    const bar = seekEl.getBoundingClientRect();
+    showTrick(Math.max(0, Math.min(1, (e.clientX - bar.left) / bar.width)) * (duration() || 0));
+  });
+  seekEl.addEventListener('pointerleave', () => { if (!dragging) hideTrick(); });
+  loadTrick();
 
   sel('audio')?.addEventListener('change', (e) => {
     audio = Number(e.target.value);
@@ -749,6 +800,7 @@ async function renderPlayer(view, id, params, seq) {
     clearInterval(saveTimer);
     clearTimeout(hideTimer);
     clearTimeout(seekTimer);
+    clearTimeout(trickRetry);
     document.removeEventListener('keydown', onKey);
     window.removeEventListener('beforeunload', onUnload);
     video.pause();

@@ -199,6 +199,12 @@ body.playing main { padding: 0; max-width: none; }
 .ctl-top .ptitle { font-size: 17px; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1; }
 .mode-badge { font-size: 12px; padding: 2px 8px; border-radius: 4px; background: rgba(255,255,255,.15); white-space: nowrap; }
 .ctl-bottom { bottom: 0; padding: 40px 18px 12px; background: linear-gradient(transparent, rgba(0,0,0,.85)); }
+.trick { position: absolute; pointer-events: none; text-align: center; }
+.trick-img {
+  background-color: #000; background-repeat: no-repeat; outline: 2px solid rgba(255,255,255,.85); border-radius: 2px;
+  box-shadow: 0 4px 16px rgba(0,0,0,.6);
+}
+.trick-time { display: inline-block; margin-top: 4px; font-size: 13px; font-variant-numeric: tabular-nums; text-shadow: 0 0 4px #000; }
 .ctl-row { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
 .ctl-row .spacer { flex: 1; }
 .pbtn {

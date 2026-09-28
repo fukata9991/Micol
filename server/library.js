@@ -13,7 +13,10 @@ export const VIDEO_EXT = new Set([
 const IMAGE_EXT = ['.jpg', '.jpeg', '.png', '.webp'];
 const SUB_EXT = new Set(['.srt', '.vtt', '.ass', '.ssa']);
 const FOLDER_IMAGES = ['poster', 'folder', 'cover', 'thumb'];
-const ITEM_IMAGE_SUFFIXES = ['', '-poster', '-thumb', '-fanart'];
+// 動画の隣に置かれた画像（旧形式）: "動画名-landscape.jpg" など
+const ITEM_IMAGE_SUFFIXES = ['-landscape', '', '-thumb', '-poster', '-fanart'];
+// 動画フォルダ内の付属ファイル用フォルダ: .thumbs/動画名.jpg, .nfo/動画名.nfo, .trickplay/動画名.trickplay/
+export const SIDE_DIRS = { thumbs: '.thumbs', nfo: '.nfo', trickplay: '.trickplay' };
 const SKIP_DIRS = new Set(['$recycle.bin', 'system volume information', '@eadir', '.trash']);
 
 export const hashId = (s) => crypto.createHash('sha1').update(s.toLowerCase()).digest('hex').slice(0, 16);
@@ -87,9 +90,12 @@ export class Library {
     } catch {}
 
     const files = new Map(entries.filter((e) => e.isFile()).map((e) => [e.name.toLowerCase(), e.name]));
+    const dirs = new Map(entries.filter((e) => e.isDirectory()).map((e) => [e.name.toLowerCase(), e.name]));
+    const side = await readSideDirs(dir, dirs);
     folder.poster = findImage(dir, files, FOLDER_IMAGES);
     for (const n of ['tvshow.nfo', 'season.nfo']) {
-      if (files.has(n) && (folder.nfo = await readNfo(path.join(dir, files.get(n))))) break;
+      const f = sideOrLocal(dir, n, side.nfo, files);
+      if (f && (folder.nfo = await readNfo(f, dir))) break;
     }
     if (!folder.poster && folder.nfo?.thumb) folder.poster = folder.nfo.thumb;
     if (parentId && folder.nfo?.title) folder.name = folder.nfo.title;
@@ -118,10 +124,10 @@ export class Library {
       folder.count += sub.count;
     }
     // movie.nfo はフォルダに動画が 1 本だけのときその動画の NFO とみなす
-    const movieNfo = videos.length === 1 && files.has('movie.nfo') ? path.join(dir, files.get('movie.nfo')) : null;
+    const movieNfo = videos.length === 1 ? sideOrLocal(dir, 'movie.nfo', side.nfo, files) : null;
     const items = [];
     for (const name of videos) {
-      const item = await this.buildItem(dir, name, files, lib, folder.id, movieNfo);
+      const item = await this.buildItem(dir, name, { files, dirs, side }, lib, folder.id, movieNfo);
       if (item) items.push(item);
     }
     items.sort(compareItems);
@@ -134,7 +140,7 @@ export class Library {
     return folder;
   }
 
-  async buildItem(dir, name, files, lib, folderId, movieNfo) {
+  async buildItem(dir, name, { files, dirs, side }, lib, folderId, movieNfo) {
     const file = path.join(dir, name);
     let st;
     try {
@@ -159,8 +165,18 @@ export class Library {
     }
     subs.sort((a, b) => naturalCompare(a.lang, b.lang));
 
-    const nfoFile = files.get(lowerBase + '.nfo');
-    const nfo = nfoFile ? await readNfo(path.join(dir, nfoFile)) : movieNfo ? await readNfo(movieNfo) : null;
+    const nfoFile = sideOrLocal(dir, base + '.nfo', side.nfo, files) || movieNfo;
+    const nfo = nfoFile ? await readNfo(nfoFile, dir) : null;
+
+    // サムネイル: .thumbs/動画名.jpg → 隣の画像（旧形式） → NFO の画像
+    const sideImage = findImage(side.thumbs.dir, side.thumbs.files, [base]);
+    const image = sideImage || findImage(dir, files, ITEM_IMAGE_SUFFIXES.map((s) => base + s)) || nfo?.thumb || null;
+    let imageMtime = 0;
+    if (image) {
+      try {
+        imageMtime = (await fs.stat(image)).mtimeMs;
+      } catch {}
+    }
 
     return {
       id,
@@ -173,7 +189,13 @@ export class Library {
       size: st.size,
       mtime: st.mtimeMs,
       added: prev?.added ?? (st.birthtimeMs || st.mtimeMs),
-      image: findImage(dir, files, ITEM_IMAGE_SUFFIXES.map((s) => base + s)) || nfo?.thumb || null,
+      image,
+      imageMtime,
+      // .thumbs に置かれた画像か（画面から設定・削除できるのはこちらだけ）
+      sideImage: !!sideImage,
+      thumbsDir: path.join(dir, SIDE_DIRS.thumbs),
+      base,
+      trickplay: sideOrLocal(dir, base + '.trickplay', side.trickplay, dirs),
       subs,
       nfo,
       probe: same && prev.probe && !prev.probe.failed ? prev.probe : null,
@@ -299,6 +321,32 @@ function compareItems(a, b) {
     if (ea !== eb) return ea - eb;
   }
   return naturalCompare(a.file, b.file);
+}
+
+/** .thumbs / .nfo / .trickplay の中身を読む（無ければ空） */
+async function readSideDirs(dir, dirs) {
+  const out = {};
+  for (const [key, name] of Object.entries(SIDE_DIRS)) {
+    const real = dirs.get(name);
+    const sdir = path.join(dir, real || name);
+    let entries = [];
+    if (real) {
+      try {
+        entries = await fs.readdir(sdir, { withFileTypes: true });
+      } catch {}
+    }
+    const want = key === 'trickplay' ? (e) => e.isDirectory() : (e) => e.isFile();
+    out[key] = { dir: sdir, files: new Map(entries.filter(want).map((e) => [e.name.toLowerCase(), e.name])) };
+  }
+  return out;
+}
+
+/** 付属フォルダ内 → 動画と同じフォルダ（旧形式）の順で探してフルパスを返す */
+function sideOrLocal(dir, name, side, local) {
+  const lower = name.toLowerCase();
+  if (side.files.has(lower)) return path.join(side.dir, side.files.get(lower));
+  if (local.has(lower)) return path.join(dir, local.get(lower));
+  return null;
 }
 
 function findImage(dir, files, bases) {

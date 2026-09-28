@@ -203,7 +203,7 @@ route('GET', '/api/items/:id', async ({ params, prog }) => {
     path: it.path,
     container: it.ext.slice(1),
     nfo: it.nfo || null,
-    customThumb: media.custom.has(it.id),
+    customThumb: !!it.sideImage,
     video: probe?.video || null,
     audio: probe?.audio || [],
     subtitles: media.subtitleList(it),
@@ -236,6 +236,20 @@ route('DELETE', '/api/items/:id/thumb', ({ params }) => {
   media.clearCustomThumb(it);
   return { ok: true, thumb: media.thumbVersion(it) };
 }, 'admin');
+
+// シークバーのプレビュー。無ければバックグラウンドで生成を始め、{ pending: true } を返す
+route('GET', '/api/items/:id/trickplay', async ({ params }) => {
+  const it = getItem(params.id);
+  const info = await media.trickplay(it, true);
+  return info ? { ...info, v: Math.round(it.mtime) } : { pending: media.trickplayPending.has(it.id) };
+});
+
+route('GET', '/api/items/:id/trickplay/:n', async ({ res, params }) => {
+  const it = getItem(params.id);
+  const info = await media.trickplay(it);
+  if (!info) throw new HttpError(404, 'トリックプレイがありません');
+  media.sendImage(res, media.trickplaySheet(it, info, Number(params.n)), 86400);
+});
 
 route('GET', '/api/items/:id/playback', async ({ params, query }) => {
   const it = getItem(params.id);
