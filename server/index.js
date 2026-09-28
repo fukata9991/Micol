@@ -465,9 +465,28 @@ function readBody(req) {
   });
 }
 
+// index.html 内の app.js / app.css に内容のハッシュを付けて配る。
+// 更新で中身が変わると URL も変わるので、ブラウザに古いファイルが残っていても使われない
+const ASSET_VERSION = (() => {
+  const h = crypto.createHash('sha1');
+  for (const f of ['app.js', 'app.css']) {
+    try {
+      h.update(fs.readFileSync(path.join(PUBLIC, f)));
+    } catch {}
+  }
+  return h.digest('hex').slice(0, 10);
+})();
+
 function serveStatic(req, res, pathname) {
   const file = path.join(PUBLIC, path.normalize(pathname === '/' ? '/index.html' : pathname));
   if (!file.startsWith(PUBLIC + path.sep)) return sendJson(res, 403, { error: 'forbidden' });
+  if (file === path.join(PUBLIC, 'index.html')) {
+    return fs.readFile(file, 'utf8', (err, html) => {
+      if (err) return sendJson(res, 404, { error: 'not found' });
+      res.writeHead(200, { 'Content-Type': MIME['.html'], 'Cache-Control': 'no-cache' });
+      res.end(html.replace(/(src|href)="\/(app\.(?:js|css))"/g, `$1="/$2?v=${ASSET_VERSION}"`));
+    });
+  }
   fs.stat(file, (err, st) => {
     if (err || !st.isFile()) return sendJson(res, 404, { error: 'not found' });
     res.writeHead(200, { 'Content-Type': MIME[path.extname(file)] || 'application/octet-stream', 'Cache-Control': 'no-cache' });

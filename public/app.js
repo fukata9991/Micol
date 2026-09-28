@@ -969,7 +969,7 @@ async function renderSettings(view) {
         const st = await api('/api/status');
         if (st.version !== before) {
           toast(`更新しました: ${st.version}`);
-          setTimeout(() => location.reload(), 800);
+          setTimeout(hardReload, 800);
           return;
         }
       } catch {}
@@ -1048,6 +1048,17 @@ function pickFolder(initial) {
 }
 
 boot();
+
+/**
+ * スーパーリロード（Ctrl+F5 相当）。ブラウザのキャッシュを使わずに
+ * ページとスクリプトを取り直してから再読み込みする
+ */
+async function hardReload() {
+  const urls = ['/', '/index.html', '/app.js', '/app.css'];
+  for (const s of document.querySelectorAll('script[src], link[rel="stylesheet"]')) urls.push(s.getAttribute('src') || s.getAttribute('href'));
+  await Promise.all(urls.map((u) => fetch(u, { cache: 'reload' }).catch(() => {})));
+  location.reload();
+}
 
 // ---------- アカウント ----------
 
