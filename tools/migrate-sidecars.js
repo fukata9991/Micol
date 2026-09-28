@@ -12,6 +12,9 @@
 //             → 残りの画像は .thumbs に同じ名前で移す（Micol は使わないが、消さずに残す）
 //   NFO       X.nfo → .nfo/X.nfo（中の画像パスは移動後のパスに書き換える）
 //   トリックプレイ X.trickplay/ → .trickplay/X.trickplay/
+// フォルダ内の動画が 1 本だけの場合（Jellyfin / Kodi の映画フォルダ形式）は、さらに
+//   landscape.jpg など → X-landscape.jpg と同じ扱い
+//   movie.nfo → .nfo/X.nfo（X.nfo が既にあれば .nfo/movie.nfo）
 // 画像がどの動画のものかは、ファイル名が「動画名 + 接尾辞 + 拡張子」と完全に一致するかで判断する。
 // 複数の動画に当てはまる場合（"A.mp4" と "A-thumb.mp4" があるときの "A-thumb.jpg" など）は、名前の長い動画のものとする。
 
@@ -81,6 +84,7 @@ function walk(dir) {
   const videos = files.filter((f) => VIDEO_EXT.has(path.extname(f).toLowerCase())).map((f) => f.slice(0, -path.extname(f).length));
   const videoSet = new Map(videos.map((b) => [b.toLowerCase(), b]));
   stat.videos += videos.length;
+  const single = videos.length === 1 ? videos[0].toLowerCase() : null;
 
   // 画像 → 持ち主の動画（名前が完全一致するもののうち、動画名が最も長いもの）
   const images = new Map(); // 動画名(小文字) -> [{ name, suffix }]
@@ -94,6 +98,8 @@ function walk(dir) {
       const base = suffix ? stem.slice(0, -suffix.length) : stem;
       if (videoSet.has(base) && (!best || base.length > best.base.length)) best = { base, suffix };
     }
+    // 動画が 1 本だけのフォルダの "landscape.jpg" はその動画のもの
+    if (!best && single && stem === 'landscape') best = { base: single, suffix: '-landscape' };
     if (best) {
       if (!images.has(best.base)) images.set(best.base, []);
       images.get(best.base).push({ name: f, suffix: best.suffix });
@@ -111,7 +117,7 @@ function walk(dir) {
     if (!videoSet.has(d.slice(0, -10).toLowerCase())) orphans.push(path.join(dir, d) + '\\');
   }
 
-  for (const base of videos) migrateVideo(dir, base, files, dirs, images.get(base.toLowerCase()) || []);
+  for (const base of videos) migrateVideo(dir, base, files, dirs, images.get(base.toLowerCase()) || [], !!single);
 
   for (const d of dirs) {
     if (d.startsWith('.') || SKIP_DIRS.has(d.toLowerCase()) || /\.trickplay$/i.test(d)) continue;
@@ -119,7 +125,7 @@ function walk(dir) {
   }
 }
 
-function migrateVideo(dir, base, files, dirs, imgs) {
+function migrateVideo(dir, base, files, dirs, imgs, single) {
   const lower = base.toLowerCase();
   const thumbsDir = path.join(dir, SIDE_DIRS.thumbs);
   const renamed = new Map(); // 画像の元のファイル名(小文字) -> 新しいフルパス（NFO の書き換え用）
@@ -183,6 +189,20 @@ function migrateVideo(dir, base, files, dirs, imgs) {
     }
   } else if (nfoPath && renamed.size) {
     rewriteNfo(nfoPath, renamed);
+  }
+  // 動画が 1 本だけのフォルダの movie.nfo
+  const movieNfo = single && files.find((f) => f.toLowerCase() === 'movie.nfo');
+  if (movieNfo) {
+    const target = nfoPath ? path.join(dir, SIDE_DIRS.nfo, 'movie.nfo') : sideNfo;
+    const src = path.join(dir, movieNfo);
+    if (exists(target)) {
+      problems.push(`NFO が既にある: ${target}（${movieNfo} は移動せず）`);
+    } else {
+      rewriteNfo(src, renamed);
+      move(src, target, 'nfo');
+      stat.nfo++;
+      note.push(`${movieNfo} → ${SIDE_DIRS.nfo}\\${path.basename(target)}`);
+    }
   }
 
   // --- トリックプレイ ---

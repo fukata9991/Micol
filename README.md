@@ -125,6 +125,8 @@ node tools\migrate-sidecars.js --apply    … 実行
 - 画像は `動画名-landscape` → `動画名` → `-thumb` → `-poster` → `-fanart` の順で最初に見つかったものを
   `.thumbs\動画名.jpg` にします（PNG / WebP は JPEG に変換）。残りの画像も同じ名前のまま `.thumbs` に移します
 - 画像がどの動画のものかは、ファイル名が「動画名 + 接尾辞」と完全に一致するかで判断します
+- フォルダ内の動画が 1 本だけの場合は、`landscape.jpg` などもその動画の画像とみなし、`movie.nfo` も `.nfo` に移します
+  （`.nfo\動画名.nfo` が既にあれば `.nfo\movie.nfo`）
 - NFO 内の画像パスは移動後のパスに書き換えます
 - 移動先に同名のファイルがある場合や、対応する動画が無いファイルは移動せず、一覧に表示します
 - 何度実行しても問題ありません。移動の記録は `data\logs\migrate-sidecars-*.json` に残ります
