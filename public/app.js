@@ -1168,7 +1168,7 @@ async function showAuth() {
 
   if (st.setup && !st.canSetup) {
     view.innerHTML = `<div class="auth-box">
-      <div class="logo big"><span class="logo-mark">▶</span>Micol</div>
+      <div class="logo big"><img class="logo-mark" src="/icons/icon.svg" alt="">Micol</div>
       <h2>初期設定がまだです</h2>
       <p class="muted">最初の管理者アカウントは、セキュリティのため<strong>サーバーと同じネットワーク（LAN）内</strong>から作成する必要があります。<br>
       サーバー PC か、同じ LAN の PC で <code>http://サーバーのIP:8420</code> を開いてください。</p>
@@ -1178,7 +1178,7 @@ async function showAuth() {
 
   const setup = st.setup;
   view.innerHTML = `<form class="auth-box" id="auth-form">
-    <div class="logo big"><span class="logo-mark">▶</span>Micol</div>
+    <div class="logo big"><img class="logo-mark" src="/icons/icon.svg" alt="">Micol</div>
     <h2>${setup ? '管理者アカウントを作成' : 'ログイン'}</h2>
     ${setup ? '<p class="muted">最初のユーザーが管理者になります。あとから設定画面でユーザーを追加できます。</p>' : ''}
     <label class="field"><span>ユーザー名</span><input name="name" required maxlength="32" autocomplete="username" autofocus></label>
