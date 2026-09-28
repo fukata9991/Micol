@@ -264,3 +264,8 @@ input[type=range].seek:hover::-webkit-slider-thumb { margin-top: -4px; }
 .frame-time { font-size: 13px; color: var(--muted); font-variant-numeric: tabular-nums; white-space: nowrap; }
 .modal-actions { flex-wrap: wrap; align-items: center; }
 .modal-actions .spacer { flex: 1; }
+
+/* ---------- アップデート ---------- */
+.commit-list { margin: 6px 0 10px; padding-left: 18px; color: var(--text); }
+.commit-list li { margin: 2px 0; }
+.commit-list code { color: var(--accent); font-size: 12px; }

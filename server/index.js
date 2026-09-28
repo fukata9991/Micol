@@ -3,7 +3,7 @@ import os from 'node:os';
 import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
-import { execFileSync } from 'node:child_process';
+import { execFile, execFileSync } from 'node:child_process';
 import { JsonStore, HttpError, ROOT } from './store.js';
 import { Library } from './library.js';
 import { Media } from './media.js';
@@ -22,7 +22,6 @@ function gitVersion() {
 const VERSION = gitVersion();
 
 const DEFAULT_TRANSCODE = { videoEncoder: 'libx264', preset: 'veryfast', quality: 23, maxHeight: 1080, audioBitrate: '192k' };
-const DEFAULT_UPDATE = { enabled: true, intervalMinutes: 5 };
 const config = new JsonStore('config.json', {
   port: 8420,
   host: '0.0.0.0',
@@ -30,13 +29,11 @@ const config = new JsonStore('config.json', {
   ffprobePath: 'ffprobe',
   // false の場合、設定の変更はサーバー PC 自身（localhost）からのみ許可
   allowRemoteAdmin: false,
-  // git リポジトリの自動更新（service/supervisor.js 経由で起動したときに有効）
-  autoUpdate: DEFAULT_UPDATE,
   libraries: [],
   transcode: DEFAULT_TRANSCODE,
 }, { pretty: true });
 config.data.transcode = { ...DEFAULT_TRANSCODE, ...config.data.transcode };
-config.data.autoUpdate = { ...DEFAULT_UPDATE, ...config.data.autoUpdate };
+delete config.data.autoUpdate; // 旧バージョンの自動更新設定（現在は手動更新のみ）
 config.save(true);
 
 // 視聴位置: { [itemId]: { position, duration, watched, updated } }
@@ -243,6 +240,40 @@ route('GET', '/api/status', () => ({
 
 route('POST', '/api/scan', () => {
   library.scanAll();
+  return { ok: true };
+}, true);
+
+// ---------- 手動更新（git） ----------
+
+function git(...args) {
+  return new Promise((resolve, reject) => {
+    execFile('git', args, { cwd: ROOT, windowsHide: true, timeout: 120000 }, (err, stdout, stderr) => {
+      if (err) reject(new HttpError(500, `git ${args[0]} に失敗しました: ${String(stderr || err.message).trim()}`));
+      else resolve(String(stdout).trim());
+    });
+  });
+}
+
+// GitHub に新しいコミットがあるか確認する（取り込みはしない）
+route('POST', '/api/update/check', async () => {
+  await git('fetch', '--quiet', 'origin');
+  const out = await git('log', '--format=%h%x09%cd%x09%s', '--date=format:%Y-%m-%d %H:%M', 'HEAD..@{u}');
+  const commits = out
+    ? out.split('\n').map((l) => {
+        const [hash, date, ...subject] = l.split('\t');
+        return { hash, date, subject: subject.join('\t') };
+      })
+    : [];
+  const local = Number(await git('rev-list', '--count', '@{u}..HEAD'));
+  return { version: VERSION, commits, local, supervised: !!process.send };
+}, true);
+
+// ランチャーに更新を依頼する（git pull → サーバー再起動）
+route('POST', '/api/update/apply', () => {
+  if (!process.send) {
+    throw new HttpError(400, 'start.bat で起動しているため、ここからは更新できません。git pull してから起動し直してください');
+  }
+  process.send({ type: 'update' });
   return { ok: true };
 }, true);
 

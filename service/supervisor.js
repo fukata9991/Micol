@@ -1,6 +1,6 @@
 // Micol の常駐用ランチャー
 // - サーバー (server/index.js) を子プロセスとして起動し、落ちたら再起動する
-// - 定期的に git リポジトリを確認し、更新があれば pull してサーバーを再起動する
+// - 設定画面の「今すぐ更新」（サーバーからの要求）で git pull し、サーバーを再起動する
 // - このファイル自体が更新されたときは終了し、run.cmd のループで起動し直してもらう
 
 import { fork, execFile } from 'node:child_process';
@@ -23,15 +23,6 @@ function log(...args) {
     if (fs.existsSync(LOG_FILE) && fs.statSync(LOG_FILE).size > MAX_LOG) fs.renameSync(LOG_FILE, LOG_FILE + '.old');
     fs.appendFileSync(LOG_FILE, line);
   } catch {}
-}
-
-function readUpdateConfig() {
-  try {
-    const cfg = JSON.parse(fs.readFileSync(path.join(DATA_DIR, 'config.json'), 'utf8'));
-    return { enabled: true, intervalMinutes: 5, ...cfg.autoUpdate };
-  } catch {
-    return { enabled: true, intervalMinutes: 5 };
-  }
 }
 
 function run(cmd, args, opts = {}) {
@@ -66,6 +57,7 @@ function startServer() {
   };
   pipe(child.stdout);
   pipe(child.stderr);
+  child.on('message', (m) => m?.type === 'update' && applyUpdate());
   child.on('exit', (code) => {
     child = null;
     if (stopping) return;
@@ -95,23 +87,26 @@ function stopServer() {
   });
 }
 
-// ---------- 自動更新 ----------
+// ---------- 手動更新 ----------
 
 let updating = false;
 
-async function checkUpdate() {
+async function applyUpdate() {
   if (updating) return;
   updating = true;
   try {
     await git('fetch', '--quiet', 'origin');
     const local = await git('rev-parse', 'HEAD');
     const remote = await git('rev-parse', '@{u}');
-    if (local === remote) return;
+    if (local === remote) {
+      log('すでに最新です');
+      return;
+    }
 
     // 早送りできる（この PC 側でコミットしていない）場合だけ更新する
     const base = await git('merge-base', 'HEAD', '@{u}');
     if (base !== local) {
-      log('この PC のリポジトリに独自のコミットがあるため、自動更新をスキップしました');
+      log('この PC のリポジトリに独自のコミットがあるため、更新できません');
       return;
     }
     const changed = (await git('diff', '--name-only', local, remote)).split('\n').filter(Boolean);
@@ -133,19 +128,10 @@ async function checkUpdate() {
     log('更新を適用しました。サーバーを再起動します');
     startServer();
   } catch (e) {
-    log(`更新の確認に失敗しました: ${e.message}`);
+    log(`更新に失敗しました: ${e.message}`);
   } finally {
     updating = false;
   }
-}
-
-function scheduleUpdate() {
-  const cfg = readUpdateConfig();
-  const minutes = Math.max(1, Number(cfg.intervalMinutes) || 5);
-  setTimeout(async () => {
-    if (readUpdateConfig().enabled) await checkUpdate();
-    scheduleUpdate();
-  }, minutes * 60000);
 }
 
 // ---------- 起動 ----------
@@ -159,7 +145,4 @@ process.on('SIGINT', shutdownAll);
 process.on('SIGTERM', shutdownAll);
 
 log(`ランチャーを起動しました (${ROOT})`);
-// 起動時にまず更新を確認してからサーバーを起動する
-if (readUpdateConfig().enabled) await checkUpdate();
-if (!child) startServer();
-scheduleUpdate();
+startServer();

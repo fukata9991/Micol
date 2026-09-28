@@ -797,7 +797,15 @@ async function renderSettings(view) {
           <button class="btn" id="scan">今すぐ再スキャン</button>
         </div>
       </section>
-      <p class="hint" id="version"></p>
+      <section class="panel">
+        <h2>アップデート</h2>
+        <div class="form-row" style="align-items:center">
+          <span id="version" class="muted" style="flex:1"></span>
+          <button class="btn" id="update-check">更新を確認</button>
+          <button class="btn primary" id="update-apply" hidden>今すぐ更新</button>
+        </div>
+        <div id="update-result" class="hint"></div>
+      </section>
     </div>`;
 
   const list = $('.lib-list', view);
@@ -868,10 +876,66 @@ async function renderSettings(view) {
     updateStatus();
   };
 
+  // --- 手動アップデート ---
+  const checkBtn = $('#update-check', view);
+  const applyBtn = $('#update-apply', view);
+  const resultEl = $('#update-result', view);
+
+  checkBtn.onclick = async () => {
+    checkBtn.disabled = true;
+    applyBtn.hidden = true;
+    resultEl.textContent = 'GitHub を確認しています…';
+    try {
+      const u = await api('/api/update/check', { method: 'POST', body: {} });
+      if (!u.commits.length) {
+        resultEl.textContent = '最新の状態です。';
+      } else {
+        resultEl.innerHTML = `<div>${u.commits.length} 件の更新があります:</div><ul class="commit-list">${u.commits
+          .map((c) => `<li><code>${esc(c.hash)}</code> ${esc(c.subject)} <span class="muted">${esc(c.date)}</span></li>`)
+          .join('')}</ul>${
+          u.local ? '<div>この PC のリポジトリに独自のコミットがあるため、更新できません。</div>'
+          : !u.supervised ? '<div>start.bat で起動しているため、ここからは更新できません。git pull してから起動し直してください。</div>'
+          : ''}`;
+        applyBtn.hidden = !u.supervised || u.local > 0;
+      }
+    } catch (err) {
+      resultEl.textContent = err.message;
+    }
+    checkBtn.disabled = false;
+  };
+
+  applyBtn.onclick = async () => {
+    if (!confirm('更新してサーバーを再起動します。再生中の人がいる場合は中断されます。よろしいですか？')) return;
+    const before = (await api('/api/status')).version;
+    applyBtn.disabled = checkBtn.disabled = true;
+    resultEl.textContent = '更新しています…（サーバーが再起動します）';
+    try {
+      await api('/api/update/apply', { method: 'POST', body: {} });
+    } catch (err) {
+      resultEl.textContent = err.message;
+      applyBtn.disabled = checkBtn.disabled = false;
+      return;
+    }
+    // 再起動して新しいバージョンになるのを待ってから読み込み直す
+    for (let i = 0; i < 90; i++) {
+      await new Promise((r) => setTimeout(r, 2000));
+      try {
+        const st = await api('/api/status');
+        if (st.version !== before) {
+          toast(`更新しました: ${st.version}`);
+          setTimeout(() => location.reload(), 800);
+          return;
+        }
+      } catch {}
+    }
+    resultEl.textContent = '更新を確認できませんでした。data/logs/micol.log を確認してください。';
+    applyBtn.disabled = checkBtn.disabled = false;
+  };
+
   async function updateStatus() {
     try {
       const st = await api('/api/status');
-      $('#version', view).textContent = `バージョン ${st.version}${st.supervised ? '（自動更新が有効）' : ''}`;
+      $('#version', view).textContent = `現在のバージョン: ${st.version}`;
       $('#status', view).textContent = [
         st.scanning ? 'スキャン中…' : '待機中',
         `${st.items} 本 / ${st.folders} フォルダ`,

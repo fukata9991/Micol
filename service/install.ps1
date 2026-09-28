@@ -58,7 +58,7 @@ $action = New-ScheduledTaskAction -Execute "$env:ComSpec" -Argument "/c `"$Root\
 $trigger = New-ScheduledTaskTrigger -AtStartup
 $settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -StartWhenAvailable `
   -ExecutionTimeLimit ([TimeSpan]::Zero) -RestartCount 999 -RestartInterval (New-TimeSpan -Minutes 1) -MultipleInstances IgnoreNew
-$desc = 'Micol メディアサーバー（git 自動更新つき）'
+$desc = 'Micol メディアサーバー'
 
 if ($StorePassword) {
   $cred = Get-Credential -UserName $user -Message "$user のパスワードを入力してください（ネットワークフォルダへのアクセスに使います）"
