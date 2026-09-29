@@ -69,6 +69,11 @@ async function fetchAll() {
     if (web && v.code) {
       try {
         v.found = await findR18(v.code);
+        // 独自の品番が FANZA の別の作品と同じ場合があるので、タイトルが似ていなければ別の作品とみなす
+        if (v.found && !sameWork(v, v.found)) {
+          v.mismatch = v.found.title;
+          v.found = null;
+        }
       } catch (e) {
         console.warn(`r18.dev の検索に失敗: ${v.code} (${e.message})`);
         // 続けて失敗する場合（サービス停止・仕様変更など）は打ち切る
@@ -111,6 +116,7 @@ async function fetchAll() {
       現在の出演者: current.join('／'),
       現在の発売日: v.nfo?.premiered || '',
       ファイル: v.path,
+      備考: v.mismatch ? `品番は一致したがタイトルが違うため除外: ${v.mismatch}` : '',
     });
   }
 
@@ -191,6 +197,26 @@ async function r18(query) {
   const json = await r.json();
   fs.writeFileSync(cacheFile, JSON.stringify(json));
   return json;
+}
+
+/**
+ * 見つかった作品がこの動画と同じか: 出演者名がファイル名にあるか、タイトルの 2 文字ずつの並びが 4 割以上ファイル名・NFO のタイトルに含まれる
+ */
+function sameWork(v, found) {
+  const norm = (s) => String(s || '').normalize('NFKC').toLowerCase().replace(/[\s\p{P}\p{S}●○◯〇]/gu, '');
+  const mine = norm(v.base) + norm(v.nfo?.title) + norm(v.nfo?.originalTitle);
+  if (found.actresses.some((a) => a.length >= 2 && mine.includes(norm(a)))) return true;
+  const t = norm(found.title);
+  // a の 2 文字ずつの並びのうち、b に含まれる割合
+  const ratio = (a, b) => {
+    if (a.length < 4) return 0;
+    let hit = 0;
+    for (let i = 0; i < a.length - 1; i++) if (b.includes(a.slice(i, i + 2))) hit++;
+    return hit / (a.length - 1);
+  };
+  // r18.dev のタイトルが長い（出演者名などが続く）場合に備えて、逆向き（ファイル名のタイトル → r18.dev）も見る
+  const own = norm(v.base.replace(/^[A-Za-z]{2,7}[-_ ]?\d{2,6}[A-Za-z]?/, ''));
+  return ratio(t, mine) >= 0.4 || (own.length >= 6 && ratio(own, t) >= 0.8);
 }
 
 async function testOne(code) {
