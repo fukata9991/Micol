@@ -137,7 +137,7 @@ function nfoBlock(nfo, { people = false } = {}) {
         ['原題', nfo.originalTitle],
         ['監督', nfo.directors?.join(', ')],
         ['制作', nfo.studios?.join(', ')],
-        ['出演', nfo.actors?.join(', ')],
+        ['出演', nfo.actors?.length ? nfo.actors.map((a) => `<a class="person-link" href="${personHref(a)}">${esc(a)}</a>`).join('、') : '', true],
         ['タグ', nfo.tags?.join(', ')],
       ].filter(([, v]) => v)
     : [];
@@ -145,7 +145,7 @@ function nfoBlock(nfo, { people = false } = {}) {
     ${meta.length ? `<div class="meta">${meta.map((x) => `<span>${esc(x)}</span>`).join('')}</div>` : ''}
     ${nfo.tagline ? `<p class="tagline">${esc(nfo.tagline)}</p>` : ''}
     ${nfo.plot ? `<p class="plot">${esc(nfo.plot)}</p>` : ''}
-    ${rows.length ? `<dl class="tech">${rows.map(([k, v]) => `<dt>${k}</dt><dd>${esc(v)}</dd>`).join('')}</dl>` : ''}
+    ${rows.length ? `<dl class="tech">${rows.map(([k, v, html]) => `<dt>${k}</dt><dd>${html ? v : esc(v)}</dd>`).join('')}</dl>` : ''}
   </div>`;
 }
 
@@ -167,10 +167,6 @@ function setCardSize(size) {
 let savedSize = 'm';
 try { savedSize = localStorage.getItem('micol.cardSize') || 'm'; } catch {}
 setCardSize(savedSize);
-document.querySelector('.size-toggle').addEventListener('click', (e) => {
-  const b = e.target.closest('[data-size]');
-  if (b) setCardSize(b.dataset.size);
-});
 
 // カード上の再生ボタン（リンク内のボタンなので伝播を止める）
 document.addEventListener('click', (e) => {
@@ -185,6 +181,7 @@ document.addEventListener('click', (e) => {
 
 const NAV_ICON = {
   home: 'M10 20v-6h4v6h5v-8h3L12 3 2 12h3v8z',
+  person: 'M12 12c2.21 0 4-1.79 4-4s-1.79-4-4-4-4 1.79-4 4 1.79 4 4 4zm0 2c-2.67 0-8 1.34-8 4v2h16v-2c0-2.66-5.33-4-8-4z',
   history: 'M13 3a9 9 0 00-9 9H1l3.89 3.89.07.14L9 12H6c0-3.87 3.13-7 7-7s7 3.13 7 7-3.13 7-7 7c-1.93 0-3.68-.79-4.94-2.06l-1.42 1.42A8.954 8.954 0 0013 21a9 9 0 000-18zm-1 5v5l4.28 2.54.72-1.21-3.5-2.08V8H12z',
   folder: 'M10 4H4a2 2 0 00-2 2v12a2 2 0 002 2h16a2 2 0 002-2V8a2 2 0 00-2-2h-8l-2-2z',
   settings: 'M19.14 12.94a7.07 7.07 0 000-1.88l2.03-1.58a.5.5 0 00.12-.64l-1.92-3.32a.5.5 0 00-.6-.22l-2.39.96a7.03 7.03 0 00-1.63-.94l-.36-2.54A.5.5 0 0013.9 2h-3.84a.5.5 0 00-.49.42l-.36 2.54c-.59.24-1.13.56-1.63.94l-2.39-.96a.5.5 0 00-.6.22L2.67 8.48a.5.5 0 00.12.64l2.03 1.58a7.07 7.07 0 000 1.88l-2.03 1.58a.5.5 0 00-.12.64l1.92 3.32c.13.22.39.3.6.22l2.39-.96c.5.38 1.04.7 1.63.94l.36 2.54c.05.24.25.42.49.42h3.84c.24 0 .44-.18.49-.42l.36-2.54c.59-.24 1.13-.56 1.63-.94l2.39.96c.22.08.47 0 .6-.22l1.92-3.32a.5.5 0 00-.12-.64l-2.03-1.58zM12 15.5a3.5 3.5 0 110-7 3.5 3.5 0 010 7z',
@@ -227,13 +224,14 @@ function renderSidebar() {
     <div class="nav-group">
       ${navLink('#/', 'home', 'ホーム')}
       ${navLink('#/history', 'history', '履歴')}
+      ${navLink('#/people', 'person', '女優')}
     </div>
     <div class="nav-group nav-libs">
       <div class="nav-heading">ライブラリ</div>
       ${libraries?.map((l) => navLink(`#/folder/${l.id}`, 'folder', l.name)).join('')
         || (libraries ? `<div class="nav-empty">${me.admin ? '<a href="#/settings">設定から追加</a>' : 'まだありません'}</div>` : '')}
     </div>
-    ${me.admin ? `<div class="nav-group">${navLink('#/settings', 'settings', '設定')}</div>` : ''}`;
+    <div class="nav-group">${navLink('#/settings', 'settings', '設定')}</div>`;
   markNav(navActive);
 }
 
@@ -280,7 +278,7 @@ function setAccountMenu(open) {
     <div class="account-head">${avatar(me, 'avatar big')}<div><div class="account-name">${esc(me.name)}</div>
       <div class="muted">${me.admin ? '管理者' : 'ユーザー'}</div></div></div>
     <a class="menu-item" role="menuitem" href="#/account">${navSvg('key')}アカウント・パスワード変更</a>
-    ${me.admin ? `<a class="menu-item" role="menuitem" href="#/settings">${navSvg('settings')}設定</a>` : ''}
+    <a class="menu-item" role="menuitem" href="#/settings">${navSvg('settings')}設定</a>
     <button type="button" class="menu-item" role="menuitem" data-act="logout">${navSvg('logout')}ログアウト</button>`;
 }
 
@@ -323,7 +321,7 @@ async function router() {
   $('.topbar').classList.toggle('searching', parts[0] === 'search');
   closeNav();
   setAccountMenu(false);
-  markNav(parts[0] === 'folder' ? `#/folder/${parts[1]}` : `#/${parts[0] || ''}`);
+  markNav(parts[0] === 'folder' ? `#/folder/${parts[1]}` : parts[0] === 'person' ? '#/people' : `#/${parts[0] || ''}`);
   try {
     switch (parts[0]) {
       case undefined: await renderHome(view, seq); break;
@@ -332,6 +330,8 @@ async function router() {
       case 'play': await renderPlayer(view, parts[1], params, seq); break;
       case 'search': await renderSearch(view, params.get('q') || ''); break;
       case 'history': await renderHistory(view); break;
+      case 'people': await renderPeople(view); break;
+      case 'person': await renderPerson(view, params.get('name') || ''); break;
       case 'settings': await renderSettings(view); break;
       case 'account': renderAccount(view); break;
       default: view.innerHTML = '<div class="empty">ページが見つかりません</div>';
@@ -643,15 +643,93 @@ function thumbEditor(it) {
   });
 }
 
+// ---------- 女優（NFO の出演者） ----------
+
+const personHref = (name) => `#/person?name=${encodeURIComponent(name)}`;
+
+/** 女優の写真。写真がない・読めないときは頭文字を表示する */
+function personPhoto(p, lazy = true) {
+  return `<div class="thumb person-thumb" style="--hue:${nameHue(p.name)}">
+    <span class="person-initial" aria-hidden="true">${esc([...p.name.trim()][0] || '?')}</span>
+    ${p.thumb ? `<img class="person-img" ${lazy ? 'loading="lazy" ' : ''}src="/api/person/thumb?name=${encodeURIComponent(p.name)}" alt="" referrerpolicy="no-referrer" onerror="this.remove()">` : ''}
+  </div>`;
+}
+
+function personCard(p) {
+  return `<a class="card person" href="${personHref(p.name)}">
+    ${personPhoto(p)}
+    <div class="card-title" title="${esc(p.name)}">${esc(p.name)}</div>
+    <div class="card-sub">${p.count} 作品</div>
+  </a>`;
+}
+
+async function renderPeople(view) {
+  const d = await api('/api/people');
+  if (!d.people.length) {
+    view.innerHTML = `<h1 class="page-title">女優</h1>
+      <div class="empty"><p>出演者が登録された動画がありません。</p>
+      <p class="muted">NFO の &lt;actor&gt; か、詳細画面の「メタデータを編集」の出演に名前を入れると、ここに表示されます。</p></div>`;
+    return;
+  }
+  let sort = 'count';
+  try { sort = localStorage.getItem('micol.peopleSort') || 'count'; } catch {}
+  view.innerHTML = `<h1 class="page-title">女優</h1>
+    <div class="toolbar">
+      <input type="search" class="people-filter" placeholder="名前で絞り込み" aria-label="名前で絞り込み">
+      <select class="people-sort" aria-label="並べ替え">
+        <option value="count">作品数が多い順</option>
+        <option value="name">名前順</option>
+      </select>
+      <span class="muted people-count"></span>
+    </div>
+    <div class="grid people-grid"></div>`;
+  const filter = $('.people-filter', view);
+  const sortSel = $('.people-sort', view);
+  const grid = $('.people-grid', view);
+  sortSel.value = sort;
+  const collator = new Intl.Collator('ja', { numeric: true, sensitivity: 'base' });
+  function draw() {
+    const q = filter.value.trim().normalize('NFKC').toLowerCase();
+    const list = d.people
+      .filter((p) => !q || p.name.normalize('NFKC').toLowerCase().includes(q))
+      .sort((a, b) => (sortSel.value === 'count' ? b.count - a.count : 0) || collator.compare(a.name, b.name));
+    $('.people-count', view).textContent = `${list.length} 人`;
+    grid.innerHTML = list.length ? list.map(personCard).join('') : '<div class="empty">見つかりませんでした</div>';
+  }
+  filter.addEventListener('input', draw);
+  sortSel.addEventListener('change', () => {
+    try { localStorage.setItem('micol.peopleSort', sortSel.value); } catch {}
+    draw();
+  });
+  draw();
+}
+
+async function renderPerson(view, name) {
+  const d = await api(`/api/person?name=${encodeURIComponent(name)}`);
+  const target = d.items.find((it) => it.position > 10 && !it.watched) || d.items.find((it) => !it.watched) || d.items[0];
+  view.innerHTML = `
+    <nav class="crumbs"><a href="#/people">女優</a></nav>
+    <div class="person-head">
+      ${personPhoto(d, false)}
+      <div>
+        <h1 class="page-title">${esc(d.name)}</h1>
+        <div class="muted">${d.items.length} 作品</div>
+        ${target ? `<div class="actions"><a class="btn primary" href="#/play/${target.id}">▶ ${target.position > 10 ? '続きを再生' : '再生'}</a></div>` : ''}
+      </div>
+    </div>
+    <div class="grid">${d.items.map((it) => itemCard(it)).join('')}</div>`;
+}
+
 // ---------- 検索 ----------
 
 async function renderSearch(view, q) {
   if (searchForm.q.value.trim() !== q) searchForm.q.value = q;
   const d = await api(`/api/search?q=${encodeURIComponent(q)}`);
   view.innerHTML = `<h1 class="page-title">「${esc(q)}」の検索結果</h1>
+    ${d.people?.length ? section('女優', `<div class="grid people-grid">${d.people.map(personCard).join('')}</div>`) : ''}
     ${d.folders.length ? section('フォルダ', `<div class="grid">${d.folders.map(folderCard).join('')}</div>`) : ''}
     ${d.items.length ? section('動画', `<div class="grid">${d.items.map((it) => itemCard(it)).join('')}</div>`) : ''}
-    ${!d.folders.length && !d.items.length ? '<div class="empty">見つかりませんでした</div>' : ''}`;
+    ${!d.folders.length && !d.items.length && !d.people?.length ? '<div class="empty">見つかりませんでした</div>' : ''}`;
 }
 
 // ---------- 履歴 ----------
@@ -1180,9 +1258,35 @@ async function renderPlayer(view, id, params, seq) {
 
 // ---------- 設定 ----------
 
+/** 設定の「表示」パネル（このブラウザだけに保存される設定。すべてのユーザーが変更できる） */
+function displayPanel() {
+  return `<section class="panel">
+    <h2>表示</h2>
+    <div class="form-row" style="align-items:center">
+      <span style="flex:1">サムネイルの大きさ</span>
+      <div class="size-toggle" role="group" aria-label="サムネイルの大きさ">
+        <button type="button" data-size="s">小</button>
+        <button type="button" data-size="m">中</button>
+        <button type="button" data-size="l">大</button>
+      </div>
+    </div>
+    <p class="hint">この設定は、このブラウザ（端末）だけに保存されます。</p>
+  </section>`;
+}
+
+function bindDisplay(view) {
+  const toggle = $('.size-toggle', view);
+  toggle.addEventListener('click', (e) => {
+    const b = e.target.closest('[data-size]');
+    if (b) setCardSize(b.dataset.size);
+  });
+  setCardSize(document.body.dataset.size); // 今の選択をボタンに反映
+}
+
 async function renderSettings(view) {
   if (!me.admin) {
-    location.replace('#/account');
+    view.innerHTML = `<div class="settings"><h1 class="page-title">設定</h1>${displayPanel()}</div>`;
+    bindDisplay(view);
     return;
   }
   let s;
@@ -1203,6 +1307,7 @@ async function renderSettings(view) {
   view.innerHTML = `
     <div class="settings">
       <h1 class="page-title">設定</h1>
+      ${displayPanel()}
       <section class="panel">
         <h2>ライブラリ（メディアフォルダ）</h2>
         <ul class="lib-list" id="lib-list"></ul>
@@ -1257,6 +1362,7 @@ async function renderSettings(view) {
       </section>
     </div>`;
 
+  bindDisplay(view);
   const list = $('#lib-list', view);
   const addForm = $('#add-lib', view);
   const tcForm = $('#tc', view);

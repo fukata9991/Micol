@@ -4,7 +4,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
 import { execFile, execFileSync } from 'node:child_process';
-import { JsonStore, HttpError, ROOT } from './store.js';
+import { JsonStore, HttpError, ROOT, naturalCompare } from './store.js';
 import { Library } from './library.js';
 import { nfoFields } from './nfo.js';
 import { Media } from './media.js';
@@ -377,9 +377,43 @@ route('POST', '/api/items/:id/watched', ({ params, body, prog }) => {
 
 route('GET', '/api/search', ({ query, prog }) => {
   const q = (query.get('q') || '').trim();
-  if (!q) return { folders: [], items: [] };
+  if (!q) return { folders: [], items: [], people: [] };
   const r = library.search(q);
-  return { folders: r.folders.map(folderDto), items: r.items.map((it) => itemDto(it, prog)) };
+  return { folders: r.folders.map(folderDto), items: r.items.map((it) => itemDto(it, prog)), people: r.people.map(personDto) };
+});
+
+// ---------- 女優（NFO の出演者） ----------
+
+const personDto = (p) => ({ name: p.name, count: p.items.length, thumb: !!p.thumb });
+
+function getPerson(name) {
+  const p = library.people().get(name || '');
+  if (!p) throw new HttpError(404, '見つかりません');
+  return p;
+}
+
+route('GET', '/api/people', () => ({
+  people: [...library.people().values()].map(personDto),
+}));
+
+// 出演作品（公開日の新しい順、なければ名前順）。名前に / などを含められるよう ?name= で渡す
+route('GET', '/api/person', ({ query, prog }) => {
+  const p = getPerson(query.get('name'));
+  const items = p.items
+    .map((id) => library.items.get(id))
+    .sort((a, b) => (b.nfo?.premiered || '').localeCompare(a.nfo?.premiered || '') || naturalCompare(a.name, b.name));
+  return { ...personDto(p), items: items.map((it) => itemDto(it, prog)) };
+});
+
+route('GET', '/api/person/thumb', ({ res, query }) => {
+  const p = getPerson(query.get('name'));
+  if (!p.thumb) throw new HttpError(404, '写真なし');
+  // NFO に URL が書かれている場合はその画像へ転送する
+  if (/^https?:\/\//i.test(p.thumb)) {
+    res.writeHead(302, { Location: p.thumb, 'Cache-Control': 'max-age=3600' });
+    return res.end();
+  }
+  media.sendImage(res, p.thumb, 3600);
 });
 
 route('GET', '/api/status', () => ({

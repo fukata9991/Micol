@@ -36,10 +36,16 @@ export async function readNfo(file, baseDir = path.dirname(file)) {
     const v = parseFloat(all(ratings, 'value')[0]);
     if (Number.isFinite(v)) rating = v;
   }
-  const actors = [...xml.matchAll(/<actor[\s>]([\s\S]*?)<\/actor>/gi)]
-    .map((m) => all(m[1], 'name')[0])
-    .filter(Boolean)
-    .slice(0, 20);
+  // 出演者: 名前と写真（<actor><thumb> の画像、なければ Kodi 形式の .actors フォルダの画像）
+  const actors = [];
+  const actorThumbs = {};
+  for (const m of xml.matchAll(/<actor[\s>]([\s\S]*?)<\/actor>/gi)) {
+    const name = all(m[1], 'name')[0];
+    if (!name || actors.includes(name) || actors.length >= 50) continue;
+    actors.push(name);
+    const t = actorThumb(baseDir, name, all(m[1], 'thumb')[0]);
+    if (t) actorThumbs[name] = t;
+  }
   // 画像: <art><landscape> → <thumb> → <art><poster> の順で、実在するローカルファイルを使う
   const art = /<art[\s>][\s\S]*?<\/art>/i.exec(body)?.[0] || '';
   const thumb = [...all(art, 'landscape'), ...all(body, 'thumb'), ...all(art, 'poster')]
@@ -66,8 +72,29 @@ export async function readNfo(file, baseDir = path.dirname(file)) {
     directors: unique(all(body, 'director')),
     tags: unique(all(body, 'tag')),
     actors,
+    actorThumbs: Object.keys(actorThumbs).length ? actorThumbs : null,
     thumb,
   });
+}
+
+const IMAGE_EXT = ['.jpg', '.jpeg', '.png', '.webp'];
+
+/** 出演者の写真: URL ならそのまま、ローカルなら実在する画像ファイルのパス、なければ null */
+function actorThumb(baseDir, name, thumb) {
+  if (thumb && /^https?:\/\//i.test(thumb)) return thumb;
+  if (thumb && IMAGE_EXT.includes(path.extname(thumb).toLowerCase())) {
+    const p = resolveLocal(baseDir, thumb);
+    if (p) return p;
+  }
+  // Kodi 形式: 動画のフォルダの .actors/名前.jpg（空白は _ に置き換えた名前も探す）
+  for (const n of new Set([name, name.replace(/ /g, '_')])) {
+    if (/[\\/:*?"<>|]/.test(n)) continue;
+    for (const ext of IMAGE_EXT) {
+      const p = path.join(baseDir, '.actors', n + ext);
+      if (fss.existsSync(p)) return p;
+    }
+  }
+  return null;
 }
 
 // ---------- 書き込み ----------

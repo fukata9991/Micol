@@ -332,7 +332,6 @@ body[data-size="s"] .play-overlay { width: 42px; height: 42px; font-size: 16px; 
   .topbar.searching .search { display: flex; align-items: center; gap: 4px; flex: 1; max-width: none; margin: 0; }
   .topbar.searching .search-close { display: grid; flex-shrink: 0; margin-left: -6px; }
   .topbar.searching .search input { flex: 1; min-width: 0; padding-top: 6px; padding-bottom: 6px; }
-  .size-toggle button { padding: 6px 9px; }
 }
 @media (max-width: 360px) {
   /* とても狭い画面ではロゴの文字を省き、ボタンが収まるようにする */
@@ -469,4 +468,28 @@ button.avatar:hover, button.avatar[aria-expanded="true"] { box-shadow: 0 0 0 3px
   .psel[data-s="audio"] { flex-grow: 1.6; }
   .skip-group { gap: 0; }
   .pbtn.skip { padding: 0 5px; }
+}
+
+/* ---------- 女優 ---------- */
+.people-grid { grid-template-columns: repeat(auto-fill, minmax(calc(var(--card) * .66), 1fr)); }
+.person-thumb {
+  aspect-ratio: 2 / 3; background: hsl(var(--hue, 220) 30% 24%);
+  display: grid; place-items: center;
+}
+.person-thumb .person-img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; object-position: center top; }
+.person-initial { font-size: clamp(28px, 30%, 64px); font-weight: 700; color: rgba(255,255,255,.85); }
+.card.person .person-initial { font-size: 40px; }
+.person-head { display: flex; gap: 20px; align-items: center; margin: 8px 0 24px; }
+.person-head .person-thumb { width: 120px; flex-shrink: 0; }
+.person-head .person-initial { font-size: 48px; }
+.person-head .actions { margin: 12px 0 0; }
+.person-link { color: var(--accent); }
+.person-link:hover { text-decoration: underline; }
+.people-filter {
+  padding: 8px 14px; border-radius: 999px; background: var(--surface); border: 1px solid var(--border); outline: none; min-width: 0; flex: 1; max-width: 280px;
+}
+.people-filter:focus { border-color: var(--accent); }
+.people-sort { padding: 8px 10px; border-radius: 8px; background: var(--surface); border: 1px solid var(--border); color: var(--text); }
+@media (max-width: 640px) {
+  .person-head .person-thumb { width: 96px; }
 }

@@ -325,7 +325,26 @@ export class Library {
     for (const it of this.items.values()) if (match(it.name, it.file, it.nfo?.originalTitle) && items.length < limit) items.push(it);
     folders.sort((a, b) => naturalCompare(a.name, b.name));
     items.sort((a, b) => naturalCompare(a.name, b.name));
-    return { folders, items };
+    const people = [...this.people().values()].filter((p) => match(p.name)).slice(0, limit);
+    people.sort((a, b) => b.items.length - a.items.length || naturalCompare(a.name, b.name));
+    return { folders, items, people };
+  }
+
+  /**
+   * 出演者（NFO の <actor>）の一覧: 名前 -> { name, items: [動画 id], thumb }。
+   * メタデータの編集でも変わるので、キャッシュせず毎回動画から集める
+   */
+  people() {
+    const map = new Map();
+    for (const it of this.items.values()) {
+      for (const name of it.nfo?.actors || []) {
+        let p = map.get(name);
+        if (!p) map.set(name, (p = { name, items: [], thumb: null }));
+        p.items.push(it.id);
+        p.thumb ||= it.nfo.actorThumbs?.[name] || null;
+      }
+    }
+    return map;
   }
 }
 
