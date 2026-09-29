@@ -148,6 +148,8 @@ Kodi / Jellyfin 形式の NFO ファイルに対応しています（UTF-8 / Shi
    FANZA の女優画像 → このAV女優の名前教えてwiki の画像 → 無修正動画エログ の写真 → みんなのAV の写真の順に探します（既に `.actors` に画像がある名義は変更しません。別名の女優は画像を共有）
 6. `node tools\fetch-actors.js --fix-thumbs` … NFO の `<actor><thumb>` が Jellyfin のフォルダや存在しないファイルを指している場合、
    `.actors` の画像のパスに書き換えます（URL や実在する画像はそのまま。書き換える前の NFO は `data\backup` に保存）
+7. `node tools\fetch-actors.js --javtube` … TFF（Tokyo Face Fuck）でローマ字名のままの行を、javtube.com の女優ページ
+   （タイトルの日本語名・作品番号）で日本語名にします（作品番号まで一致したものは `○`、名前だけのものは `?`）
 4. `node tools\fetch-actors.js --aliases` … 同じ女優の別名の候補（r18.dev・av-wiki・tokyo-face-fuck.com・Wikipedia・このAV女優の名前教えてwiki）を
    `data\people-aliases-suggested.json` に書き出します。Micol は 2 か所以上の情報源で一致した組を自動で同じ女優にまとめ、
    残りは女優一覧の「別名の候補を確認」で「同じ女優」「違う」を選べます

@@ -9,6 +9,7 @@
 //   node tools/fetch-actors.js --photos                … 女優の画像を探して、動画フォルダの .actors/名義.jpg に保存する
 //   node tools/fetch-actors.js --fix-thumbs            … NFO の出演者の画像のパス（Jellyfin のフォルダなど）を .actors の画像に書き換える
 //   node tools/fetch-actors.js --tff                   … TFF（Tokyo Face Fuck）の行を tokyo-face-fuck.com の出演女優リストで埋める
+//   node tools/fetch-actors.js --javtube               … TFF でローマ字名のままの行を javtube.com の女優ページで日本語名にする
 //   node tools/fetch-actors.js --test MILK-163         … 1 作品だけ検索して結果を表示する（確認用）
 //   --no-web を付けるとネットには接続せず、ファイル名からだけ取得する
 //
@@ -1435,6 +1436,76 @@ async function erozukiProfile(name) {
   return { birth: b ? normalizeDate(`${b[1]}-${b[2]}-${b[3]}`) || '' : '', image: img || '' };
 }
 
+// ---------- JavTube（javtube.com。Tokyo Face Fuck などのローマ字名 → 日本語名、--javtube） ----------
+//
+// 女優ページ https://javtube.com/tokyopic/tokyofacefuck/名-姓/ のタイトル「Rena Matsumoto 松本レナ …」から日本語名を読み、
+// 作品一覧の「109_matsumoto_rena」から作品番号を確かめる。
+// 一覧で出演者がローマ字名のまま（取得元が ファイル名(ローマ字)）か空の TFF の行を日本語名にする
+// （作品番号まで一致したものは ○、名前だけのものは ?）
+
+const JAVTUBE_CACHE = path.join(CACHE_DIR, 'javtube');
+
+async function javtubeActress(given, family) {
+  const slug = `${given}-${family}`.toLowerCase();
+  fs.mkdirSync(JAVTUBE_CACHE, { recursive: true });
+  const cacheFile = path.join(JAVTUBE_CACHE, `${slug}.html`);
+  let html;
+  if (fs.existsSync(cacheFile)) html = fs.readFileSync(cacheFile, 'utf8');
+  else {
+    await sleep(2000); // 負担をかけないよう 2 秒に 1 回まで
+    const r = await politeFetch(`https://javtube.com/tokyopic/tokyofacefuck/${slug}/`, { headers: { 'User-Agent': UA } });
+    html = r.status === 404 ? '' : r.ok ? await r.text() : null;
+    if (html === null) throw new Error(`HTTP ${r.status}`);
+    fs.writeFileSync(cacheFile, html);
+  }
+  if (!html) return null;
+  const title = strip(/<title>([\s\S]*?)<\/title>/.exec(html)?.[1] || '');
+  // "Rena Matsumoto 松本レナ Pretty AV Model Page 1! JavTube!" → 松本レナ
+  const m = new RegExp(`^${given}\\s+${family}\\s+(.+?)\\s+Pretty AV Model`, 'i').exec(title);
+  const name = m?.[1]?.trim();
+  if (!name || !/[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}]/u.test(name)) return null;
+  const works = new Set([...html.matchAll(new RegExp(`/tokyopic/tokyofacefuck/${slug}/(\\d{3})_[a-z]+_[a-z]+/`, 'g'))].map((w) => w[1]));
+  return { name, works };
+}
+
+async function fillFromJavtube() {
+  if (!fs.existsSync(REVIEW)) return fail(`一覧がありません: ${REVIEW}`);
+  const rows = readCsv(REVIEW);
+  const profiles = avwikiKnownProfiles();
+  let byWork = 0;
+  let byName = 0;
+  const notFound = new Set();
+  for (const r of rows) {
+    if (!r.ファイル || (split(r.出演者).length && r.取得元 !== 'ファイル名(ローマ字)')) continue;
+    const base = path.basename(r.ファイル, path.extname(r.ファイル));
+    const m = /^TFF[-_ ]?(\d{3})\s+([A-Z][a-z]+)\s+([A-Z][a-z]+)(?:\s+\d+)?$/.exec(base);
+    if (!m) continue;
+    let a = null;
+    try {
+      a = await javtubeActress(m[2], m[3]);
+    } catch (e) {
+      console.warn(`JavTube の取得に失敗: ${m[2]} ${m[3]} (${e.message})`);
+    }
+    if (!a) {
+      notFound.add(`${m[2]} ${m[3]}`);
+      continue;
+    }
+    const sure = a.works.has(m[1]);
+    const birth = profiles.find((x) => x.birth && (x.name === a.name || x.aliases.includes(a.name)))?.birth || '-';
+    r.出演者 = a.name;
+    r.生年月日 = birth;
+    r.取得元 = sure ? 'JavTube(作品番号)' : 'JavTube(名前)';
+    r.適用 = sure ? '○' : '?';
+    r.備考 = [r.備考, `${m[2]} ${m[3]} → ${a.name}${sure ? `（作品 ${m[1]} を確認）` : '（作品番号は未確認）'}`].filter(Boolean).join(' / ');
+    if (sure) byWork++;
+    else byName++;
+  }
+  writeCsv(REVIEW, rows);
+  console.log(`
+日本語名にしました: 作品番号まで一致 ${byWork} 行（○）、名前だけ一致 ${byName} 行（?）
+${notFound.size ? `JavTube に見つからなかった: ${[...notFound].join('、')}\n` : ''}一覧: ${REVIEW}（生年月日は --births で探せます）`);
+}
+
 // ---------- 書き込み ----------
 
 async function applyReview() {
@@ -1586,6 +1657,7 @@ else if (args.includes('--births')) await fillBirthdates();
 else if (args.includes('--titles')) await fillFromTitles();
 else if (args.includes('--romaji')) await fillFromRomaji();
 else if (args.includes('--tff')) await fillFromTff();
+else if (args.includes('--javtube')) await fillFromJavtube();
 else if (args.includes('--aliases')) await suggestAliases();
 else if (args.includes('--photos')) await fetchPhotos();
 else if (args.includes('--fix-thumbs')) await fixActorThumbs();
