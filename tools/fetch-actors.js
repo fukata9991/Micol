@@ -24,6 +24,7 @@
 
 import fs from 'node:fs';
 import path from 'node:path';
+import crypto from 'node:crypto';
 import { VIDEO_EXT, SIDE_DIRS } from '../server/library.js';
 import { readNfo, writeNfo, normalizeDate } from '../server/nfo.js';
 import { DATA_DIR, CACHE_DIR } from '../server/store.js';
@@ -273,7 +274,9 @@ async function findAvWiki(code) {
 /** ファイル名のタイトルで av-wiki.net を検索し、タイトルが十分に似ている作品を返す（品番が無い・品番で見つからない作品用） */
 async function findAvWikiByTitle(v) {
   const q = titleQuery(v.base);
-  if (q.length < 6) return null;
+  // 短いタイトル（"Mizuki 1" など）は別の作品に当たりやすいので検索しない
+  const own = v.base.replace(/^[A-Za-z]{2,7}[-_ ]?\d{2,6}[A-Za-z]?/, '').normalize('NFKC').replace(/[\s\p{P}\p{S}\d]/gu, '');
+  if (q.length < 6 || own.length < 10) return null;
   for (const w of (await avwikiSearchWorks(q)).slice(0, 3)) {
     const found = await parseAvWikiWork(await avwiki(w.url));
     if (found && sameWork(v, found) && titleRatio(v.base, found.title) >= 0.6) return { ...found, url: w.url };
@@ -402,7 +405,7 @@ async function avwikiBirth(url) {
 }
 
 async function avwiki(url) {
-  const cacheFile = path.join(AVWIKI_CACHE, `${url.replace(/^https:\/\/av-wiki\.net\//, '').replace(/[\\/:*?"<>|\s%]/g, '_')}.html`);
+  const cacheFile = path.join(AVWIKI_CACHE, cacheName(url.replace(/^https:\/\/av-wiki\.net\//, '').replace(/[\\/:*?"<>|\s%]/g, '_'), '.html'));
   if (fs.existsSync(cacheFile)) {
     const c = fs.readFileSync(cacheFile, 'utf8');
     return c === '' ? null : c;
@@ -894,6 +897,12 @@ async function politeFetch(url, opts = {}) {
     console.warn(`  アクセスが多すぎるため ${wait} 秒待ちます（${new URL(url).host}）`);
     await sleep(wait * 1000);
   }
+}
+
+/** キャッシュのファイル名: 長すぎる（Windows のパスの上限を超える）場合は先頭とハッシュにする */
+function cacheName(name, ext) {
+  if (name.length <= 150) return name + ext;
+  return `${name.slice(0, 60)}-${crypto.createHash('sha1').update(name).digest('hex').slice(0, 16)}${ext}`;
 }
 
 function sleep(ms) {
