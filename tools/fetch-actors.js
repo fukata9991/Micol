@@ -483,7 +483,12 @@ async function wikipediaBirth(name) {
   const tpl = /\{\{\s*生年月日と年齢\s*\|\s*(\d{4})\s*\|\s*(\d{1,2})\s*\|\s*(\d{1,2})/.exec(line);
   if (tpl) return normalizeDate(`${tpl[1]}-${tpl[2]}-${tpl[3]}`) || '';
   const plain = /(\d{4})年\s*(\d{1,2})月\s*(\d{1,2})日/.exec(line.replace(/\[\[|\]\]/g, ''));
-  return plain ? normalizeDate(`${plain[1]}-${plain[2]}-${plain[3]}`) || '' : '';
+  if (plain) return normalizeDate(`${plain[1]}-${plain[2]}-${plain[3]}`) || '';
+  // {{AV女優}} の基礎情報: | 生年 = 1992 | 生月 = 11 | 生日 = 12（年だけ・年月だけの場合もある）
+  const field = (k) => new RegExp(`\\|\\s*${k}\\s*=\\s*(\\d{1,4})\\s*(?=[|\\n}<])`).exec(text)?.[1];
+  const [y, m, d] = [field('生年'), field('生月'), field('生日')];
+  if (!y || y.length !== 4) return '';
+  return normalizeDate([y, m, m && d].filter(Boolean).join('-')) || '';
 }
 
 // ---------- 書き込み ----------
