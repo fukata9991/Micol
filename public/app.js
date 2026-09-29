@@ -322,14 +322,28 @@ window.addEventListener('pagehide', () => {
   try { sessionStorage.setItem(SCROLL_STORE, JSON.stringify([...scrollPos].slice(-100))); } catch {}
 });
 
+let lastHash = null; // 直前に表示した画面（新しい履歴の項目に「1 つ前の画面」として覚える）
+
 /** 今の履歴の項目の目印（無ければ付ける）と、既に付いていたか（= 戻る・進む・描き直しで来たか） */
 function historyKey() {
   const had = history.state?.micolKey;
   if (had) return { key: had, revisit: true };
   const key = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
-  history.replaceState({ ...(history.state || {}), micolKey: key }, '');
+  history.replaceState({ ...(history.state || {}), micolKey: key, prevHash: lastHash }, '');
   return { key, revisit: false };
 }
+
+// パンくずなどのリンクの行き先が 1 つ前の画面と同じなら、ブラウザの「戻る」にしてスクロール位置も戻す
+document.addEventListener('click', (e) => {
+  if (e.defaultPrevented || e.button !== 0 || e.ctrlKey || e.metaKey || e.shiftKey || e.altKey) return;
+  const a = e.target.closest('a[href^="#/"]');
+  if (!a || a.target) return;
+  const prev = history.state?.prevHash;
+  if (prev && a.getAttribute('href') === prev) {
+    e.preventDefault();
+    history.back();
+  }
+});
 
 /** 覚えておいた位置までスクロールする。画像の読み込みなどで高さが足りない間は少し待ってやり直す */
 function restoreScroll(y, seq) {
@@ -388,6 +402,7 @@ async function router() {
     else window.scrollTo(0, 0);
   }
   scrollKey = key;
+  lastHash = location.hash || '#/';
 }
 
 window.addEventListener('hashchange', () => me && router());

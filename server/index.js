@@ -748,15 +748,31 @@ function readBody(req) {
 
 // index.html 内の app.js / app.css に内容のハッシュを付けて配る。
 // 更新で中身が変わると URL も変わるので、ブラウザに古いファイルが残っていても使われない
-const ASSET_VERSION = (() => {
-  const h = crypto.createHash('sha1');
-  for (const f of ['app.js', 'app.css']) {
-    try {
-      h.update(fs.readFileSync(path.join(PUBLIC, f)));
-    } catch {}
+// 再起動せずにファイルを更新（git pull など）した場合にも変わるよう、更新日時が変わったら計算し直す
+let assetVersion = { stamp: '', hash: '' };
+function assetVersionNow() {
+  const files = ['app.js', 'app.css'].map((f) => path.join(PUBLIC, f));
+  const stamp = files
+    .map((f) => {
+      try {
+        const st = fs.statSync(f);
+        return `${st.mtimeMs}:${st.size}`;
+      } catch {
+        return '';
+      }
+    })
+    .join('|');
+  if (stamp !== assetVersion.stamp) {
+    const h = crypto.createHash('sha1');
+    for (const f of files) {
+      try {
+        h.update(fs.readFileSync(f));
+      } catch {}
+    }
+    assetVersion = { stamp, hash: h.digest('hex').slice(0, 10) };
   }
-  return h.digest('hex').slice(0, 10);
-})();
+  return assetVersion.hash;
+}
 
 function serveStatic(req, res, pathname) {
   const file = path.join(PUBLIC, path.normalize(pathname === '/' ? '/index.html' : pathname));
@@ -765,7 +781,7 @@ function serveStatic(req, res, pathname) {
     return fs.readFile(file, 'utf8', (err, html) => {
       if (err) return sendJson(res, 404, { error: 'not found' });
       res.writeHead(200, { 'Content-Type': MIME['.html'], 'Cache-Control': 'no-cache' });
-      res.end(html.replace(/(src|href)="\/(app\.(?:js|css))"/g, `$1="/$2?v=${ASSET_VERSION}"`));
+      res.end(html.replace(/(src|href)="\/(app\.(?:js|css))"/g, `$1="/$2?v=${assetVersionNow()}"`));
     });
   }
   fs.stat(file, (err, st) => {
