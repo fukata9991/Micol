@@ -5,6 +5,7 @@
 //   node tools/fetch-actors.js --births                … 一覧の ○ の行で生年月日が空の出演者を、女優名で検索して埋める
 //   node tools/fetch-actors.js --titles                … 一覧の出演者が空の行を、av-wiki.net を品番・タイトルで検索して埋める
 //   node tools/fetch-actors.js --romaji                … ファイル名がローマ字の女優名だけの行（TFF-109 Rena Matsumoto 1 など）を日本語名で埋める
+//   node tools/fetch-actors.js --tff                   … TFF（Tokyo Face Fuck）の行を tokyo-face-fuck.com の出演女優リストで埋める
 //   node tools/fetch-actors.js --test MILK-163         … 1 作品だけ検索して結果を表示する（確認用）
 //   --no-web を付けるとネットには接続せず、ファイル名からだけ取得する
 //
@@ -594,6 +595,10 @@ function r18Aliases() {
     if (!map.has(a)) map.set(a, []);
     if (!map.get(a).includes(b)) map.get(a).push(b);
   };
+  // tokyo-face-fuck.com の別名（--tff で保存）
+  for (const [name, list] of Object.entries(readJson(path.join(CACHE_DIR, 'tff', 'aliases.json')) || {})) {
+    for (const x of [name, ...list]) for (const y of [name, ...list]) add(x, y);
+  }
   if (!fs.existsSync(R18_CACHE)) return map;
   for (const f of fs.readdirSync(R18_CACHE)) {
     if (!f.startsWith('combined=')) continue;
@@ -842,6 +847,90 @@ async function fillFromRomaji() {
 一覧: ${REVIEW}`);
 }
 
+// ---------- Tokyo Face Fuck（--tff） ----------
+//
+// tokyo-face-fuck.com の出演女優リストの女優ページに、日本語名・別名と作品番号（099_MisakiAkari → TFF-099）がある。
+// ファイル名の TFF-099 からその女優を入れる（作品番号で結び付くので ○）。別名は --births で生年月日を探すときに使う
+
+const TFF_CACHE = path.join(CACHE_DIR, 'tff');
+
+async function tffGet(url) {
+  const cacheFile = path.join(TFF_CACHE, cacheName(url.replace(/^https:\/\/tokyo-face-fuck\.com\//, '').replace(/[\\/:*?"<>|\s]/g, '_'), '.html'));
+  if (fs.existsSync(cacheFile)) return fs.readFileSync(cacheFile, 'utf8');
+  await sleep(2000);
+  const r = await politeFetch(url, { headers: { 'User-Agent': UA } });
+  if (!r.ok) throw new Error(`HTTP ${r.status}`);
+  const html = new TextDecoder('shift_jis').decode(await r.arrayBuffer());
+  fs.writeFileSync(cacheFile, html);
+  return html;
+}
+
+/** 作品番号 -> { name, kana, aliases } と、名前 -> [別名] */
+async function tffIndex() {
+  fs.mkdirSync(TFF_CACHE, { recursive: true });
+  const list = await tffGet('https://tokyo-face-fuck.com/actress/');
+  const pages = [...new Set([...list.matchAll(/href="(?:\.\.\/)?actress\/([a-z0-9-]+\.html)"/g)].map((m) => m[1]))];
+  const works = new Map();
+  const aliases = {};
+  for (const page of pages) {
+    const html = await tffGet(`https://tokyo-face-fuck.com/actress/${page}`);
+    const m = /名前：([^（<]+)（([^）<]*)）/.exec(html);
+    if (!m) continue;
+    const name = m[1].trim();
+    const alias = (/別名：([^<]*)</.exec(html)?.[1] || '')
+      .split(/[、,，]/)
+      .map((s) => s.trim())
+      .filter((s) => s && s !== 'など');
+    if (alias.length) aliases[name] = alias;
+    for (const w of html.matchAll(/>(\d{3})_[A-Za-z]+</g)) {
+      const code = `TFF-${w[1]}`;
+      if (!works.has(code)) works.set(code, []);
+      if (!works.get(code).some((x) => x.name === name)) works.get(code).push({ name, kana: m[2].trim(), aliases: alias });
+    }
+  }
+  fs.writeFileSync(path.join(TFF_CACHE, 'aliases.json'), JSON.stringify(aliases, null, 1));
+  console.log(`tokyo-face-fuck.com: 女優 ${pages.length} 人・作品 ${works.size} 本`);
+  return works;
+}
+
+async function fillFromTff() {
+  if (!fs.existsSync(REVIEW)) return fail(`一覧がありません: ${REVIEW}`);
+  const works = await tffIndex();
+  const rows = readCsv(REVIEW);
+  const profiles = avwikiKnownProfiles();
+  let filled = 0;
+  const missing = new Set();
+  for (const r of rows) {
+    const base = path.basename(r.ファイル || '', path.extname(r.ファイル || ''));
+    const m = /^TFF[-_ ]?(\d{3})\b/i.exec(base);
+    if (!m) continue;
+    const list = works.get(`TFF-${m[1]}`);
+    if (!list) {
+      missing.add(`TFF-${m[1]}`);
+      continue;
+    }
+    // 生年月日: 一覧に既にある値 → 保存済みの av-wiki の女優ページ（名前・別名義） → 空（--births で探す）
+    const oldNames = split(r.出演者);
+    const oldBirths = String(r.生年月日 || '').split('／');
+    const births = list.map((a) => {
+      const i = oldNames.indexOf(a.name);
+      if (i >= 0 && /\d/.test(oldBirths[i] || '')) return oldBirths[i];
+      const p = profiles.find((x) => x.birth && [a.name, ...a.aliases].some((n) => x.name === n || x.aliases.includes(n)));
+      return p?.birth || '-';
+    });
+    r.出演者 = list.map((a) => a.name).join('／');
+    r.生年月日 = births.join('／');
+    r.取得元 = 'tokyo-face-fuck.com';
+    r.適用 = '○';
+    r.備考 = list.map((a) => `${a.name}（${a.kana}）${a.aliases.length ? ` 別名: ${a.aliases.join('、')}` : ''}`).join(' / ');
+    filled++;
+  }
+  writeCsv(REVIEW, rows);
+  console.log(`
+TFF の行を埋めました: ${filled} 行（○）${missing.size ? `\n作品番号が見つからなかった: ${[...missing].join('、')}` : ''}
+一覧: ${REVIEW}（生年月日が - の出演者は --births で探せます）`);
+}
+
 // ---------- 書き込み ----------
 
 async function applyReview() {
@@ -984,5 +1073,6 @@ if (testIdx >= 0) await testOne(args[testIdx + 1] || '');
 else if (args.includes('--births')) await fillBirthdates();
 else if (args.includes('--titles')) await fillFromTitles();
 else if (args.includes('--romaji')) await fillFromRomaji();
+else if (args.includes('--tff')) await fillFromTff();
 else if (apply) await applyReview();
 else await fetchAll();
