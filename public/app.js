@@ -515,7 +515,7 @@ function nfoEditor(it) {
         <div class="form-row">${text('originalTitle', '原題', n.originalTitle, 'grow')}${text('sortTitle', '並べ替え用タイトル', n.sortTitle, 'grow')}</div>
         <div class="form-row">
           ${text('year', '年', n.year, 'inputmode="numeric" size="6"')}
-          ${text('premiered', '発売日 (2024-01-31)', n.premiered, 'size="12"')}
+          ${text('premiered', '発売日', n.premiered, 'size="12" placeholder="2019/05/25"')}
           ${text('season', 'シーズン', n.season, 'inputmode="numeric" size="5"')}
           ${text('episode', '話数', n.episode, 'inputmode="numeric" size="5"')}
           ${text('rating', '評価 (0〜10)', n.rating, 'inputmode="decimal" size="6"')}
@@ -560,8 +560,37 @@ function nfoEditor(it) {
         form.querySelectorAll('button, input, textarea').forEach((b) => { b.disabled = false; });
       }
     });
+    // 発売日: 入力欄を離れたら 2019-05-25 の形に整え、年が空なら発売日の年を入れる
+    const released = form.premiered;
+    released.addEventListener('blur', () => {
+      const d = normalizeDate(released.value);
+      released.setCustomValidity(d === null ? '日付として読み取れません（例: 2019/05/25）' : '');
+      if (d === null) return released.reportValidity();
+      released.value = d;
+      if (d && !form.year.value.trim()) form.year.value = d.slice(0, 4);
+    });
+    released.addEventListener('input', () => released.setCustomValidity(''));
     $('input[name="title"]', modal).focus();
   });
+}
+
+/**
+ * 日付の表記をそろえる: 2019/05/25・2019.5.25・2019年5月25日・20190525・全角数字 → 2019-05-25。
+ * 年月だけ・年だけも可（2019/5 → 2019-05）。空なら ''、日付として読めない・存在しない日付なら null
+ */
+function normalizeDate(input) {
+  const s = String(input ?? '').normalize('NFKC').trim().replace(/[T\s]+\d{1,2}:\d{2}(:\d{2})?.*$/, '');
+  if (!s) return '';
+  let m = /^(\d{4})(\d{2})(\d{2})$/.exec(s);
+  if (!m) {
+    const t = s.replace(/日$/, '').replace(/[年月]/g, '-').replace(/[\s/.\-]+/g, '-').replace(/-$/, '');
+    m = /^(\d{4})(?:-(\d{1,2})(?:-(\d{1,2}))?)?$/.exec(t);
+  }
+  if (!m) return null;
+  const [y, mo, d] = [m[1], m[2], m[3]].map((v) => (v === undefined ? undefined : Number(v)));
+  if (mo !== undefined && (mo < 1 || mo > 12)) return null;
+  if (d !== undefined && new Date(y, mo - 1, d).getDate() !== d) return null;
+  return [String(y), mo && String(mo).padStart(2, '0'), d && String(d).padStart(2, '0')].filter(Boolean).join('-');
 }
 
 /** サムネイル変更ダイアログ。変更したら true を返す */

@@ -6,7 +6,7 @@ import crypto from 'node:crypto';
 import { execFile, execFileSync } from 'node:child_process';
 import { JsonStore, HttpError, ROOT, naturalCompare } from './store.js';
 import { Library } from './library.js';
-import { nfoFields } from './nfo.js';
+import { nfoFields, normalizeDate } from './nfo.js';
 import { Media } from './media.js';
 import { Auth, isDirectLan } from './auth.js';
 
@@ -414,7 +414,8 @@ route('GET', '/api/person', ({ query, prog }) => {
 // 生年月日の設定（空なら削除）。2024 / 2024-01 / 2024-01-31 の形式
 route('PUT', '/api/person', ({ query, body }) => {
   const p = getPerson(query.get('name'));
-  const v = String(body.birthdate ?? '').trim();
+  const v = normalizeDate(body.birthdate);
+  if (v === null) throw new HttpError(400, `生年月日を日付として読み取れません（1995-04-12 や 1995/04/12 の形式で入力してください）: ${body.birthdate}`);
   if (v) {
     const m = /^(\d{4})(?:-(\d{2})(?:-(\d{2}))?)?$/.exec(v);
     const [y, mo = 1, d = 1] = m ? m.slice(1).filter(Boolean).map(Number) : [];

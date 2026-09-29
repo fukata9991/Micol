@@ -29,7 +29,9 @@ export async function readNfo(file, baseDir = path.dirname(file)) {
     return Number.isFinite(n) ? n : null;
   };
 
-  const premiered = one('premiered') || one('aired') || one('releasedate');
+  // 2019/05/25 などの表記も 2019-05-25 にそろえて扱う（ファイルは書き換えない）
+  const premieredRaw = one('premiered') || one('aired') || one('releasedate');
+  const premiered = normalizeDate(premieredRaw) || premieredRaw;
   let rating = num('rating');
   if (rating == null) {
     const ratings = /<ratings[\s>][\s\S]*?<\/ratings>/i.exec(xml)?.[0] || '';
@@ -97,6 +99,25 @@ function actorThumb(baseDir, name, thumb) {
   return null;
 }
 
+/**
+ * 日付の表記をそろえる: 2019/05/25・2019.5.25・2019年5月25日・20190525・全角数字 → 2019-05-25。
+ * 年月だけ・年だけも可（2019/5 → 2019-05）。空なら ''、日付として読めない・存在しない日付なら null
+ */
+export function normalizeDate(input) {
+  const s = String(input ?? '').normalize('NFKC').trim().replace(/[T\s]+\d{1,2}:\d{2}(:\d{2})?.*$/, '');
+  if (!s) return '';
+  let m = /^(\d{4})(\d{2})(\d{2})$/.exec(s);
+  if (!m) {
+    const t = s.replace(/日$/, '').replace(/[年月]/g, '-').replace(/[\s/.\-]+/g, '-').replace(/-$/, '');
+    m = /^(\d{4})(?:-(\d{1,2})(?:-(\d{1,2}))?)?$/.exec(t);
+  }
+  if (!m) return null;
+  const [y, mo, d] = [m[1], m[2], m[3]].map((v) => (v === undefined ? undefined : Number(v)));
+  if (mo !== undefined && (mo < 1 || mo > 12)) return null;
+  if (d !== undefined && new Date(y, mo - 1, d).getDate() !== d) return null;
+  return [String(y), mo && String(mo).padStart(2, '0'), d && String(d).padStart(2, '0')].filter(Boolean).join('-');
+}
+
 // ---------- 書き込み ----------
 
 // 編集できる項目: 画面での名前 -> NFO のタグ
@@ -124,7 +145,11 @@ export function nfoFields(body) {
       }
       v = String(n);
     }
-    if (key === 'premiered' && v && !/^\d{4}(-\d{2}(-\d{2})?)?$/.test(v)) throw new Error(`日付は 2024-01-31 の形式で入力してください: ${v}`);
+    if (key === 'premiered' && v) {
+      const d = normalizeDate(v);
+      if (!d) throw new Error(`発売日を日付として読み取れません（2019-05-25 や 2019/05/25 の形式で入力してください）: ${v}`);
+      v = d;
+    }
     out[key] = v;
   }
   for (const key of [...Object.keys(LIST_FIELDS), 'actors']) {
