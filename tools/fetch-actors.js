@@ -217,7 +217,7 @@ async function r18(query) {
   const cacheFile = path.join(R18_CACHE, `${query.replace(/[\\/:*?"<>|\s]/g, '_')}.json`);
   if (fs.existsSync(cacheFile)) return readJson(cacheFile);
   await sleep(1000); // 負担をかけないよう 1 秒に 1 回まで
-  const r = await fetch(`https://r18.dev/videos/vod/movies/detail/-/${query}/json`, {
+  const r = await politeFetch(`https://r18.dev/videos/vod/movies/detail/-/${query}/json`, {
     headers: { 'User-Agent': 'Micol (personal media library)' },
     signal: AbortSignal.timeout(30000),
   });
@@ -294,7 +294,7 @@ async function avwiki(url) {
     return c === '' ? null : c;
   }
   await sleep(1500); // 負担をかけないよう 1.5 秒に 1 回まで
-  const r = await fetch(url, { headers: { 'User-Agent': UA }, signal: AbortSignal.timeout(30000) });
+  const r = await politeFetch(url, { headers: { 'User-Agent': UA } });
   if (r.status === 404) {
     fs.writeFileSync(cacheFile, '');
     return null;
@@ -540,7 +540,7 @@ async function wikipediaApi(params) {
   const cached = readJson(cacheFile);
   if (cached) return cached;
   await sleep(1000);
-  const r = await fetch(`https://ja.wikipedia.org/w/api.php?${q}`, { headers: { 'User-Agent': UA }, signal: AbortSignal.timeout(30000) });
+  const r = await politeFetch(`https://ja.wikipedia.org/w/api.php?${q}`, { headers: { 'User-Agent': UA } });
   if (!r.ok) throw new Error(`HTTP ${r.status}`);
   const json = await r.json();
   fs.writeFileSync(cacheFile, JSON.stringify(json));
@@ -649,7 +649,7 @@ async function minnanoGet(rel) {
     return c === '' ? null : c;
   }
   await sleep(2000); // 負担をかけないよう 2 秒に 1 回まで
-  const r = await fetch(MINNANO + rel, { headers: { 'User-Agent': UA }, signal: AbortSignal.timeout(30000) });
+  const r = await politeFetch(MINNANO + rel, { headers: { 'User-Agent': UA } });
   if (r.status === 404) {
     fs.writeFileSync(cacheFile, '');
     return null;
@@ -765,6 +765,20 @@ function readJson(file) {
     return JSON.parse(fs.readFileSync(file, 'utf8').replace(/^\uFEFF/, ''));
   } catch {
     return null;
+  }
+}
+
+/**
+ * fetch に「アクセスが多すぎる」（429 / 503）への対応を足したもの:
+ * Retry-After（無ければ 60 秒・120 秒・240 秒）待ってから最大 3 回やり直す
+ */
+async function politeFetch(url, opts = {}) {
+  for (let attempt = 0; ; attempt++) {
+    const r = await fetch(url, { ...opts, signal: AbortSignal.timeout(30000) });
+    if ((r.status !== 429 && r.status !== 503) || attempt >= 3) return r;
+    const wait = Math.max(Number(r.headers.get('retry-after')) || 0, 60 * 2 ** attempt);
+    console.warn(`  アクセスが多すぎるため ${wait} 秒待ちます（${new URL(url).host}）`);
+    await sleep(wait * 1000);
   }
 }
 
