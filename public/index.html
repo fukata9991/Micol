@@ -17,6 +17,9 @@
 </head>
 <body>
   <header class="topbar">
+    <button type="button" class="icon-btn" id="menu-btn" title="メニュー" aria-label="メニュー" aria-controls="sidebar">
+      <svg viewBox="0 0 24 24" width="24" height="24" fill="currentColor"><path d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"/></svg>
+    </button>
     <a href="#/" class="logo"><img class="logo-mark" src="/icons/icon.svg" alt="">Micol</a>
     <form id="search-form" class="search" role="search">
       <input type="search" name="q" placeholder="タイトルを検索" autocomplete="off" aria-label="検索">
@@ -26,10 +29,13 @@
       <button type="button" data-size="m" title="標準で表示">中</button>
       <button type="button" data-size="l" title="大きく表示">大</button>
     </div>
-    <a href="#/settings" class="icon-btn" title="設定" aria-label="設定">
-      <svg viewBox="0 0 24 24" width="22" height="22" fill="currentColor"><path d="M19.14 12.94a7.07 7.07 0 000-1.88l2.03-1.58a.5.5 0 00.12-.64l-1.92-3.32a.5.5 0 00-.6-.22l-2.39.96a7.03 7.03 0 00-1.63-.94l-.36-2.54A.5.5 0 0013.9 2h-3.84a.5.5 0 00-.49.42l-.36 2.54c-.59.24-1.13.56-1.63.94l-2.39-.96a.5.5 0 00-.6.22L2.67 8.48a.5.5 0 00.12.64l2.03 1.58a7.07 7.07 0 000 1.88l-2.03 1.58a.5.5 0 00-.12.64l1.92 3.32c.13.22.39.3.6.22l2.39-.96c.5.38 1.04.7 1.63.94l.36 2.54c.05.24.25.42.49.42h3.84c.24 0 .44-.18.49-.42l.36-2.54c.59-.24 1.13-.56 1.63-.94l2.39.96c.22.08.47 0 .6-.22l1.92-3.32a.5.5 0 00-.12-.64l-2.03-1.58zM12 15.5a3.5 3.5 0 110-7 3.5 3.5 0 010 7z"/></svg>
-    </a>
+    <div class="account">
+      <button type="button" class="avatar" id="account-btn" title="アカウント" aria-label="アカウント" aria-haspopup="menu" aria-expanded="false"></button>
+      <div class="account-menu" id="account-menu" role="menu" hidden></div>
+    </div>
   </header>
+  <nav class="sidebar" id="sidebar" aria-label="メニュー"></nav>
+  <div class="sidebar-backdrop" id="sidebar-backdrop"></div>
   <main id="view"></main>
   <div id="toast" role="status" aria-live="polite"></div>
   <script type="module" src="/app.js"></script>

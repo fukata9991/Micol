@@ -173,6 +173,131 @@ document.addEventListener('click', (e) => {
   location.hash = `#/play/${btn.dataset.play}`;
 });
 
+// ---------- サイドバー ----------
+
+const NAV_ICON = {
+  home: 'M10 20v-6h4v6h5v-8h3L12 3 2 12h3v8z',
+  history: 'M13 3a9 9 0 00-9 9H1l3.89 3.89.07.14L9 12H6c0-3.87 3.13-7 7-7s7 3.13 7 7-3.13 7-7 7c-1.93 0-3.68-.79-4.94-2.06l-1.42 1.42A8.954 8.954 0 0013 21a9 9 0 000-18zm-1 5v5l4.28 2.54.72-1.21-3.5-2.08V8H12z',
+  folder: 'M10 4H4a2 2 0 00-2 2v12a2 2 0 002 2h16a2 2 0 002-2V8a2 2 0 00-2-2h-8l-2-2z',
+  settings: 'M19.14 12.94a7.07 7.07 0 000-1.88l2.03-1.58a.5.5 0 00.12-.64l-1.92-3.32a.5.5 0 00-.6-.22l-2.39.96a7.03 7.03 0 00-1.63-.94l-.36-2.54A.5.5 0 0013.9 2h-3.84a.5.5 0 00-.49.42l-.36 2.54c-.59.24-1.13.56-1.63.94l-2.39-.96a.5.5 0 00-.6.22L2.67 8.48a.5.5 0 00.12.64l2.03 1.58a7.07 7.07 0 000 1.88l-2.03 1.58a.5.5 0 00-.12.64l1.92 3.32c.13.22.39.3.6.22l2.39-.96c.5.38 1.04.7 1.63.94l.36 2.54c.05.24.25.42.49.42h3.84c.24 0 .44-.18.49-.42l.36-2.54c.59-.24 1.13-.56 1.63-.94l2.39.96c.22.08.47 0 .6-.22l1.92-3.32a.5.5 0 00-.12-.64l-2.03-1.58zM12 15.5a3.5 3.5 0 110-7 3.5 3.5 0 010 7z',
+  account: 'M12 12c2.21 0 4-1.79 4-4s-1.79-4-4-4-4 1.79-4 4 1.79 4 4 4zm0 2c-2.67 0-8 1.34-8 4v2h16v-2c0-2.66-5.33-4-8-4z',
+  key: 'M12.65 10A5.99 5.99 0 007 6c-3.31 0-6 2.69-6 6s2.69 6 6 6a5.99 5.99 0 005.65-4H17v4h4v-4h2v-4H12.65zM7 14c-1.1 0-2-.9-2-2s.9-2 2-2 2 .9 2 2-.9 2-2 2z',
+  logout: 'M17 7l-1.41 1.41L18.17 11H8v2h10.17l-2.58 2.58L17 17l5-5zM4 5h8V3H4c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h8v-2H4V5z',
+  close: 'M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z',
+};
+const navSvg = (name) => `<svg viewBox="0 0 24 24" width="24" height="24" fill="currentColor" aria-hidden="true"><path d="${NAV_ICON[name]}"/></svg>`;
+
+let libraries = null; // サイドバーに出すライブラリ（ルートフォルダ）。null は読み込み前
+let navActive = '#/';
+
+// 広い画面ではサイドバーを常に表示し、メニューボタンでミニ表示と切り替える。
+// 狭い画面では普段は隠しておき、メニューボタンで上に重ねて開く
+const wideNav = matchMedia('(min-width: 1100px)');
+try { document.body.classList.toggle('nav-mini', localStorage.getItem('micol.navMini') === '1'); } catch {}
+const closeNav = () => document.body.classList.remove('nav-open');
+
+$('#menu-btn').addEventListener('click', () => {
+  if (wideNav.matches) {
+    const mini = document.body.classList.toggle('nav-mini');
+    try { localStorage.setItem('micol.navMini', mini ? '1' : '0'); } catch {}
+  } else {
+    document.body.classList.toggle('nav-open');
+  }
+});
+$('#sidebar-backdrop').addEventListener('click', closeNav);
+wideNav.addEventListener('change', closeNav);
+
+// ヘッダーの高さ（スマホ幅では 2 段になる）に合わせてサイドバーの位置を決める
+const topbar = $('.topbar');
+new ResizeObserver(() => document.documentElement.style.setProperty('--topbar-h', `${topbar.offsetHeight}px`)).observe(topbar);
+
+function navLink(href, icon, label) {
+  return `<a class="nav-item" href="${href}" title="${esc(label)}">${navSvg(icon)}<span>${esc(label)}</span></a>`;
+}
+
+function renderSidebar() {
+  $('#sidebar').innerHTML = `
+    <div class="nav-group">
+      ${navLink('#/', 'home', 'ホーム')}
+      ${navLink('#/history', 'history', '履歴')}
+    </div>
+    <div class="nav-group nav-libs">
+      <div class="nav-heading">ライブラリ</div>
+      ${libraries?.map((l) => navLink(`#/folder/${l.id}`, 'folder', l.name)).join('')
+        || (libraries ? `<div class="nav-empty">${me.admin ? '<a href="#/settings">設定から追加</a>' : 'まだありません'}</div>` : '')}
+    </div>
+    <div class="nav-group">
+      ${me.admin ? navLink('#/settings', 'settings', '設定') : ''}
+      ${navLink('#/account', 'account', 'アカウント')}
+    </div>`;
+  markNav(navActive);
+}
+
+/** サイドバーの現在地を強調する（フォルダや動画の中ではそのライブラリ） */
+function markNav(href) {
+  navActive = href;
+  document.querySelectorAll('#sidebar .nav-item').forEach((a) => a.classList.toggle('active', a.getAttribute('href') === href));
+}
+
+async function loadLibraries() {
+  try {
+    libraries = await api('/api/libraries');
+  } catch { return; }
+  renderSidebar();
+}
+
+// ---------- アカウントメニュー ----------
+
+/** 名前から決まる色（色相）と頭文字の丸アイコン */
+function nameHue(name) {
+  let h = 0;
+  for (const c of name) h = (h * 31 + c.codePointAt(0)) % 360;
+  return h;
+}
+const initial = (name) => [...name][0]?.toUpperCase() || '?';
+const avatar = (user, cls = 'avatar') => `<span class="${cls}" style="--hue:${nameHue(user.name)}" aria-hidden="true">${esc(initial(user.name))}</span>`;
+
+const accountBtn = $('#account-btn');
+const accountMenu = $('#account-menu');
+
+function renderAccountButton() {
+  accountBtn.style.setProperty('--hue', nameHue(me.name));
+  accountBtn.textContent = initial(me.name);
+  accountBtn.title = `${me.name}${me.admin ? '（管理者）' : ''}`;
+}
+
+function setAccountMenu(open) {
+  accountMenu.hidden = !open;
+  accountBtn.setAttribute('aria-expanded', String(open));
+  if (!open) return;
+  accountMenu.innerHTML = `
+    <div class="account-head">${avatar(me, 'avatar big')}<div><div class="account-name">${esc(me.name)}</div>
+      <div class="muted">${me.admin ? '管理者' : 'ユーザー'}</div></div></div>
+    <a class="menu-item" role="menuitem" href="#/account">${navSvg('key')}アカウント・パスワード変更</a>
+    ${me.admin ? `<a class="menu-item" role="menuitem" href="#/settings">${navSvg('settings')}設定</a>` : ''}
+    <button type="button" class="menu-item" role="menuitem" data-act="logout">${navSvg('logout')}ログアウト</button>`;
+}
+
+accountBtn.addEventListener('click', () => setAccountMenu(accountMenu.hidden));
+accountMenu.addEventListener('click', (e) => {
+  if (e.target.closest('[data-act="logout"]')) logout();
+  if (e.target.closest('.menu-item')) setAccountMenu(false);
+});
+document.addEventListener('click', (e) => {
+  if (!accountMenu.hidden && !e.target.closest('.account')) setAccountMenu(false);
+});
+document.addEventListener('keydown', (e) => {
+  if (e.key !== 'Escape') return;
+  if (!accountMenu.hidden) setAccountMenu(false);
+  closeNav();
+});
+
+async function logout() {
+  await api('/api/auth/logout', { method: 'POST', body: {} }).catch(() => {});
+  me = null;
+  showAuth();
+}
+
 // ---------- ルーター ----------
 
 let cleanup = null;
@@ -188,6 +313,9 @@ async function router() {
   const view = $('#view');
   document.body.classList.toggle('playing', parts[0] === 'play');
   if (parts[0] !== 'search') $('#search-form').q.value = '';
+  closeNav();
+  setAccountMenu(false);
+  markNav(parts[0] === 'folder' ? `#/folder/${parts[1]}` : `#/${parts[0] || ''}`);
   try {
     switch (parts[0]) {
       case undefined: await renderHome(view, seq); break;
@@ -195,7 +323,9 @@ async function router() {
       case 'item': await renderItem(view, parts[1]); break;
       case 'play': await renderPlayer(view, parts[1], params, seq); break;
       case 'search': await renderSearch(view, params.get('q') || ''); break;
+      case 'history': await renderHistory(view); break;
       case 'settings': await renderSettings(view); break;
+      case 'account': renderAccount(view); break;
       default: view.innerHTML = '<div class="empty">ページが見つかりません</div>';
     }
   } catch (e) {
@@ -232,6 +362,11 @@ function refreshWhileScanning(scanning, seq) {
 
 async function renderHome(view, seq) {
   const d = await api('/api/home');
+  const libKey = (list) => list?.map((l) => l.id + l.name).join('|');
+  if (libKey(d.libraries) !== libKey(libraries)) {
+    libraries = d.libraries;
+    renderSidebar();
+  }
   if (!d.libraries.length) {
     view.innerHTML = `<div class="empty"><h2>ライブラリがありません</h2>
       <p>設定から動画フォルダを追加すると、ここに表示されます。</p>
@@ -252,6 +387,7 @@ async function renderFolder(view, id, seq) {
   const d = await api(`/api/folders/${id}`);
   const items = d.items;
   const target = items.find((it) => it.position > 10 && !it.watched) || items.find((it) => !it.watched) || items[0];
+  if (seq === routeSeq) markNav(`#/folder/${d.breadcrumbs[0]?.id}`);
   view.innerHTML = `
     ${crumbs(d.breadcrumbs.slice(0, -1))}
     <h1 class="page-title">${esc(d.folder.name)}</h1>
@@ -277,6 +413,7 @@ function audioLabel(a) {
 
 async function renderItem(view, id) {
   const it = await api(`/api/items/${id}`);
+  if (it.breadcrumbs[0]) markNav(`#/folder/${it.breadcrumbs[0].id}`);
   const v = it.video;
   const resume = it.position > 10;
   const ep = episodeLabel(it);
@@ -489,6 +626,118 @@ async function renderSearch(view, q) {
     ${d.folders.length ? section('フォルダ', `<div class="grid">${d.folders.map(folderCard).join('')}</div>`) : ''}
     ${d.items.length ? section('動画', `<div class="grid">${d.items.map((it) => itemCard(it)).join('')}</div>`) : ''}
     ${!d.folders.length && !d.items.length ? '<div class="empty">見つかりませんでした</div>' : ''}`;
+}
+
+// ---------- 履歴 ----------
+
+function dayLabel(ts) {
+  const d = new Date(ts);
+  const day = (x) => new Date(x.getFullYear(), x.getMonth(), x.getDate()).getTime();
+  const diff = Math.round((day(new Date()) - day(d)) / 86400000);
+  if (diff === 0) return '今日';
+  if (diff === 1) return '昨日';
+  if (diff < 7) return d.toLocaleDateString('ja-JP', { weekday: 'long' });
+  return d.toLocaleDateString('ja-JP', d.getFullYear() === new Date().getFullYear() ? { month: 'long', day: 'numeric' } : { dateStyle: 'long' });
+}
+
+function historyRow(it) {
+  const pct = it.duration && it.position ? Math.min(100, (it.position / it.duration) * 100) : 0;
+  const state = it.watched ? '視聴済み' : it.position ? `${fmtTime(it.position)} まで視聴` : '';
+  const time = new Date(it.updated).toLocaleTimeString('ja-JP', { hour: '2-digit', minute: '2-digit' });
+  return `<div class="hist-row" data-id="${it.id}">
+    <a class="thumb" href="#/item/${it.id}">
+      ${thumbImg(thumbUrl(it))}
+      ${it.watched ? '<span class="badge" title="視聴済み">✓</span>' : ''}
+      ${it.duration ? `<span class="dur">${fmtTime(it.duration)}</span>` : ''}
+      <button class="play-overlay" data-play="${it.id}" title="再生" aria-label="再生">▶</button>
+      ${pct ? `<div class="progress"><div style="width:${pct}%"></div></div>` : ''}
+    </a>
+    <div class="hist-info">
+      <a class="hist-title" href="#/item/${it.id}">${esc(it.name)}</a>
+      <div class="card-sub">${esc([it.folder, episodeLabel(it)].filter(Boolean).join(' ・ '))}</div>
+      <div class="card-sub">${esc([time, state].filter(Boolean).join(' ・ '))}</div>
+    </div>
+    <button class="icon-btn" data-remove title="履歴から削除" aria-label="履歴から削除">${navSvg('close')}</button>
+  </div>`;
+}
+
+async function renderHistory(view) {
+  const { items } = await api('/api/history');
+  const groups = new Map();
+  for (const it of items) {
+    const label = dayLabel(it.updated);
+    if (!groups.has(label)) groups.set(label, []);
+    groups.get(label).push(it);
+  }
+  view.innerHTML = `<div class="history">
+    <div class="toolbar">
+      <h1 class="page-title">履歴</h1>
+      <span class="spacer"></span>
+      ${items.length ? '<button class="btn small danger" id="clear-history">すべての履歴を削除</button>' : ''}
+    </div>
+    ${items.length
+      ? [...groups].map(([label, list]) => section(label, `<div class="hist-list">${list.map(historyRow).join('')}</div>`)).join('')
+      : '<div class="empty">視聴履歴はありません</div>'}
+  </div>`;
+
+  view.querySelector('.history').addEventListener('click', async (e) => {
+    const b = e.target.closest('[data-remove]');
+    if (!b) return;
+    const row = b.closest('.hist-row');
+    try {
+      await api(`/api/history/${row.dataset.id}`, { method: 'DELETE' });
+    } catch (err) { return toast(err.message); }
+    const sec = row.closest('.section');
+    row.remove();
+    if (!sec.querySelector('.hist-row')) sec.remove();
+    if (!view.querySelector('.hist-row')) router();
+    toast('履歴から削除しました');
+  });
+
+  $('#clear-history', view)?.addEventListener('click', async () => {
+    if (!confirm('すべての視聴履歴を削除しますか？\n（続きから再生する位置と「視聴済み」の記録も消えます）')) return;
+    try {
+      await api('/api/history', { method: 'DELETE' });
+      toast('履歴を削除しました');
+      router();
+    } catch (err) { toast(err.message); }
+  });
+}
+
+// ---------- アカウント ----------
+
+function renderAccount(view) {
+  view.innerHTML = `
+    <div class="settings">
+      <h1 class="page-title">アカウント</h1>
+      <section class="panel">
+        <div class="account-head">${avatar(me, 'avatar big')}<div>
+          <div class="account-name">${esc(me.name)}</div>
+          <div class="muted">${me.admin ? '管理者' : 'ユーザー'}としてログイン中</div>
+        </div><span class="spacer"></span><button class="btn" id="logout">ログアウト</button></div>
+      </section>
+      <section class="panel">
+        <h2>パスワードの変更</h2>
+        <form class="form-row" id="pw-form">
+          <label class="field"><span>現在のパスワード</span><input type="password" name="current" required autocomplete="current-password"></label>
+          <label class="field"><span>新しいパスワード（8 文字以上）</span><input type="password" name="password" required minlength="8" autocomplete="new-password"></label>
+          <label class="field"><span>新しいパスワード（確認）</span><input type="password" name="confirm" required minlength="8" autocomplete="new-password"></label>
+          <button class="btn primary">パスワードを変更</button>
+        </form>
+        <p class="hint">変更すると、この端末以外ではログアウトされます。</p>
+      </section>
+    </div>`;
+  $('#logout', view).onclick = logout;
+  const form = $('#pw-form', view);
+  form.onsubmit = async (e) => {
+    e.preventDefault();
+    if (form.password.value !== form.confirm.value) return toast('新しいパスワードが一致しません');
+    try {
+      await api('/api/auth/password', { method: 'POST', body: { current: form.current.value, password: form.password.value } });
+      form.reset();
+      toast('パスワードを変更しました（他の端末はログアウトされます）');
+    } catch (err) { toast(err.message); }
+  };
 }
 
 // ---------- プレーヤー ----------
@@ -901,8 +1150,7 @@ async function renderPlayer(view, id, params, seq) {
 
 async function renderSettings(view) {
   if (!me.admin) {
-    view.innerHTML = `<div class="settings"><h1 class="page-title">設定</h1>${accountPanel()}</div>`;
-    bindAccount(view);
+    location.replace('#/account');
     return;
   }
   let s;
@@ -923,7 +1171,6 @@ async function renderSettings(view) {
   view.innerHTML = `
     <div class="settings">
       <h1 class="page-title">設定</h1>
-      ${accountPanel()}
       <section class="panel">
         <h2>ライブラリ（メディアフォルダ）</h2>
         <ul class="lib-list" id="lib-list"></ul>
@@ -995,6 +1242,8 @@ async function renderSettings(view) {
     const r = await api('/api/settings', { method: 'PUT', body: { libraries } });
     s.libraries = r.libraries;
     drawLibs();
+    libsChanged = true; // スキャンが終わったらサイドバーに反映する
+    updateStatus();
   }
 
   list.onclick = async (e) => {
@@ -1102,9 +1351,14 @@ async function renderSettings(view) {
     applyBtn.disabled = checkBtn.disabled = false;
   };
 
+  let libsChanged = false;
   async function updateStatus() {
     try {
       const st = await api('/api/status');
+      if (libsChanged && !st.scanning) {
+        libsChanged = false;
+        loadLibraries();
+      }
       $('#version', view).textContent = `現在のバージョン: ${st.version}`;
       $('#status', view).textContent = [
         st.scanning ? 'スキャン中…' : '待機中',
@@ -1114,7 +1368,6 @@ async function renderSettings(view) {
     } catch {}
   }
 
-  bindAccount(view);
   bindUsers(view);
   drawLibs();
   updateStatus();
@@ -1184,41 +1437,7 @@ async function hardReload() {
   location.reload();
 }
 
-// ---------- アカウント ----------
-
-function accountPanel() {
-  return `<section class="panel">
-    <h2>アカウント</h2>
-    <div class="form-row" style="align-items:center">
-      <span style="flex:1">${esc(me.name)} としてログイン中${me.admin ? '（管理者）' : ''}</span>
-      <button class="btn" id="logout">ログアウト</button>
-    </div>
-    <form class="form-row" id="pw-form">
-      <label class="field"><span>現在のパスワード</span><input type="password" name="current" required autocomplete="current-password"></label>
-      <label class="field"><span>新しいパスワード</span><input type="password" name="password" required minlength="8" autocomplete="new-password"></label>
-      <label class="field"><span>新しいパスワード（確認）</span><input type="password" name="confirm" required minlength="8" autocomplete="new-password"></label>
-      <button class="btn">パスワードを変更</button>
-    </form>
-  </section>`;
-}
-
-function bindAccount(view) {
-  $('#logout', view).onclick = async () => {
-    await api('/api/auth/logout', { method: 'POST', body: {} }).catch(() => {});
-    me = null;
-    showAuth();
-  };
-  const form = $('#pw-form', view);
-  form.onsubmit = async (e) => {
-    e.preventDefault();
-    if (form.password.value !== form.confirm.value) return toast('新しいパスワードが一致しません');
-    try {
-      await api('/api/auth/password', { method: 'POST', body: { current: form.current.value, password: form.password.value } });
-      form.reset();
-      toast('パスワードを変更しました（他の端末はログアウトされます）');
-    } catch (err) { toast(err.message); }
-  };
-}
+// ---------- ユーザー管理 ----------
 
 function bindUsers(view) {
   const list = $('#user-list', view);
@@ -1333,6 +1552,9 @@ async function showAuth() {
 function enterApp(user) {
   me = user;
   document.body.classList.remove('auth-mode');
+  renderAccountButton();
+  renderSidebar();
+  loadLibraries();
   router();
 }
 

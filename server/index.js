@@ -173,6 +173,34 @@ route('GET', '/api/home', ({ prog }) => {
   };
 });
 
+route('GET', '/api/libraries', () => library.roots.map((id) => folderDto(library.folders.get(id))));
+
+// 視聴履歴（新しい順）。未視聴に戻したものなど、位置も視聴済みも無いものは含めない
+route('GET', '/api/history', ({ prog }) => {
+  const items = Object.entries(prog)
+    .filter(([id, p]) => library.items.has(id) && (p.position > 0 || p.watched))
+    .sort((a, b) => (b[1].updated || 0) - (a[1].updated || 0))
+    .slice(0, 300)
+    .map(([id, p]) => {
+      const it = library.items.get(id);
+      return { ...itemDto(it, prog), updated: p.updated || 0, folder: library.folders.get(it.folderId)?.name || '' };
+    });
+  return { items };
+});
+
+// 履歴から削除（視聴位置・視聴済みの記録も消える）
+route('DELETE', '/api/history/:id', ({ params, prog }) => {
+  delete prog[params.id];
+  progress.save();
+  return { ok: true };
+});
+
+route('DELETE', '/api/history', ({ prog }) => {
+  for (const id of Object.keys(prog)) delete prog[id];
+  progress.save();
+  return { ok: true };
+});
+
 route('GET', '/api/folders/:id', ({ params, prog }) => {
   const f = getFolder(params.id);
   return {
