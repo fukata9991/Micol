@@ -41,12 +41,15 @@ export async function readNfo(file, baseDir = path.dirname(file)) {
   // 出演者: 名前と写真（<actor><thumb> の画像、なければ Kodi 形式の .actors フォルダの画像）
   const actors = [];
   const actorThumbs = {};
+  const actorBirthdates = {};
   for (const m of xml.matchAll(/<actor[\s>]([\s\S]*?)<\/actor>/gi)) {
     const name = all(m[1], 'name')[0];
     if (!name || actors.includes(name) || actors.length >= 50) continue;
     actors.push(name);
     const t = actorThumb(baseDir, name, all(m[1], 'thumb')[0]);
     if (t) actorThumbs[name] = t;
+    const b = normalizeDate(all(m[1], 'birthdate')[0]);
+    if (b) actorBirthdates[name] = b;
   }
   // 画像: <art><landscape> → <thumb> → <art><poster> の順で、実在するローカルファイルを使う
   const art = /<art[\s>][\s\S]*?<\/art>/i.exec(body)?.[0] || '';
@@ -75,6 +78,7 @@ export async function readNfo(file, baseDir = path.dirname(file)) {
     tags: unique(all(body, 'tag')),
     actors,
     actorThumbs: Object.keys(actorThumbs).length ? actorThumbs : null,
+    actorBirthdates: Object.keys(actorBirthdates).length ? actorBirthdates : null,
     thumb,
   });
 }
@@ -187,7 +191,7 @@ export async function writeNfo(file, fields, { seed = null } = {}) {
   for (const [key, tag] of Object.entries(TEXT_FIELDS)) if (key in fields) plan.set(tag, fields[key] ? [el(tag, fields[key])] : []);
   for (const [key, tag] of Object.entries(LIST_FIELDS)) if (key in fields) plan.set(tag, fields[key].map((v) => el(tag, v)));
   if ('actors' in fields) {
-    // 既にいる出演者は役名・画像などをそのまま残す
+    // 出演者は 名前 か { name, birthdate }。既にいる出演者は役名・画像などをそのまま残す
     const kept = new Map();
     for (const c of children(body)) {
       if (c.name !== 'actor') continue;
@@ -195,7 +199,15 @@ export async function writeNfo(file, fields, { seed = null } = {}) {
       const name = all(block, 'name')[0];
       if (name && !kept.has(name)) kept.set(name, block);
     }
-    plan.set('actor', fields.actors.map((n) => kept.get(n) ?? `<actor>${nl}${indent}${indent}${el('name', n)}${nl}${indent}</actor>`));
+    const in2 = indent + indent;
+    plan.set('actor', fields.actors.map((a) => {
+      const { name, birthdate } = typeof a === 'string' ? { name: a } : a;
+      let block = kept.get(name);
+      if (!block) return `<actor>${nl}${in2}${el('name', name)}${birthdate ? nl + in2 + el('birthdate', birthdate) : ''}${nl}${indent}</actor>`;
+      // 生年月日が無ければ </actor> の前に足す（既にあれば変えない）
+      if (birthdate && !/<birthdate[\s>]/i.test(block)) block = block.replace(/(\s*)<\/actor>$/i, `${nl}${in2}${el('birthdate', birthdate)}$1</actor>`);
+      return block;
+    }));
   }
 
   let out = '';

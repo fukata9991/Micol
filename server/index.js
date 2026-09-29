@@ -51,7 +51,8 @@ const userProgress = (user) => (progress.data.users[user.id] ??= {});
 const auth = new Auth();
 // 女優の情報（生年月日）: { [名前]: { birthdate: 'YYYY-MM-DD' } }
 const people = new JsonStore('people.json', {}, { pretty: true });
-const birthdateOf = (name) => people.data[name]?.birthdate || null;
+// 画面で設定した値（people.json）を優先し、なければ NFO の <actor><birthdate> を使う
+const birthdateOf = (name, person) => people.data[name]?.birthdate || (person ?? library.people().get(name))?.birthdate || null;
 const library = new Library(config);
 const media = new Media(config, library);
 
@@ -260,7 +261,7 @@ route('GET', '/api/items/:id', async ({ params, prog }) => {
     nfo: it.nfo || null,
     nfoPath: it.nfoPath || null,
     // 出演者と生年月日（当時の年齢の表示用）
-    cast: (it.nfo?.actors || []).map((name) => ({ name, birthdate: birthdateOf(name) })),
+    cast: (it.nfo?.actors || []).map((name) => ({ name, birthdate: people.data[name]?.birthdate || it.nfo.actorBirthdates?.[name] || birthdateOf(name) })),
     customThumb: !!it.sideImage,
     video: probe?.video || null,
     audio: probe?.audio || [],
@@ -390,7 +391,7 @@ route('GET', '/api/search', ({ query, prog }) => {
 
 // ---------- 女優（NFO の出演者） ----------
 
-const personDto = (p) => ({ name: p.name, count: p.items.length, thumb: !!p.thumb, birthdate: birthdateOf(p.name) });
+const personDto = (p) => ({ name: p.name, count: p.items.length, thumb: !!p.thumb, birthdate: birthdateOf(p.name, p) });
 
 function getPerson(name) {
   const p = library.people().get(name || '');

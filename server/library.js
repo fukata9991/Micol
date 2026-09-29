@@ -339,9 +339,10 @@ export class Library {
     for (const it of this.items.values()) {
       for (const name of it.nfo?.actors || []) {
         let p = map.get(name);
-        if (!p) map.set(name, (p = { name, items: [], thumb: null }));
+        if (!p) map.set(name, (p = { name, items: [], thumb: null, birthdate: null }));
         p.items.push(it.id);
         p.thumb ||= it.nfo.actorThumbs?.[name] || null;
+        p.birthdate ||= it.nfo.actorBirthdates?.[name] || null;
       }
     }
     return map;
