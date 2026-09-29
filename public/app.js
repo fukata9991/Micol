@@ -802,8 +802,12 @@ async function renderPlayer(view, id, params, seq) {
         <input type="range" class="seek" min="0" max="0" step="0.1" value="0" aria-label="再生位置">
         <div class="ctl-row">
           <button class="pbtn" data-a="pp" title="再生/一時停止 (Space)">${ICON.play}</button>
-          <button class="pbtn hide-sm" data-a="rew" title="10秒戻る (←)">${ICON.rew}</button>
-          <button class="pbtn hide-sm" data-a="fwd" title="10秒進む (→)">${ICON.fwd}</button>
+          <span class="skip-group">
+            <button class="pbtn skip" data-skip="-300" title="5分戻る (Shift+←)" aria-label="5分戻る">${ICON.rew}<span>5分</span></button>
+            <button class="pbtn skip" data-skip="-10" title="10秒戻る (←)" aria-label="10秒戻る">${ICON.rew}<span>10秒</span></button>
+            <button class="pbtn skip" data-skip="10" title="10秒進む (→)" aria-label="10秒進む">${ICON.fwd}<span>10秒</span></button>
+            <button class="pbtn skip" data-skip="300" title="5分進む (Shift+→)" aria-label="5分進む">${ICON.fwd}<span>5分</span></button>
+          </span>
           ${it.next ? `<button class="pbtn" data-a="next" title="次へ: ${esc(it.next.name)}">${ICON.next}</button>` : ''}
           <button class="pbtn" data-a="mute" title="ミュート (M)">${ICON.vol}</button>
           <input type="range" class="vol" min="0" max="1" step="0.05" aria-label="音量">
@@ -1023,8 +1027,10 @@ async function renderPlayer(view, id, params, seq) {
   player.addEventListener('touchstart', poke, { passive: true });
 
   btn('pp').onclick = togglePlay;
-  btn('rew').onclick = () => seek(current() - 10);
-  btn('fwd').onclick = () => seek(current() + 10);
+  // スキップ（10秒 / 5分）。連打すると移動量が積み重なる（seek は連続操作をまとめて読み込む）
+  player.querySelectorAll('[data-skip]').forEach((b) => {
+    b.onclick = () => seek(current() + Number(b.dataset.skip));
+  });
   btn('back').onclick = goBack;
   btn('fs').onclick = toggleFullscreen;
   if (me.admin) btn('snap').onclick = async () => {
@@ -1104,8 +1110,8 @@ async function renderPlayer(view, id, params, seq) {
     if (e.target.tagName === 'SELECT' || e.ctrlKey || e.altKey || e.metaKey) return;
     const k = e.key;
     if (k === ' ' || k === 'k') togglePlay();
-    else if (k === 'ArrowLeft' || k === 'j') seek(current() - (k === 'j' ? 30 : 10));
-    else if (k === 'ArrowRight' || k === 'l') seek(current() + (k === 'l' ? 30 : 10));
+    else if (k === 'ArrowLeft' || k === 'j') seek(current() - (e.shiftKey ? 300 : k === 'j' ? 30 : 10));
+    else if (k === 'ArrowRight' || k === 'l') seek(current() + (e.shiftKey ? 300 : k === 'l' ? 30 : 10));
     else if (k === 'ArrowUp') setVolume(video.volume + 0.05);
     else if (k === 'ArrowDown') setVolume(video.volume - 0.05);
     else if (k === 'f') toggleFullscreen();

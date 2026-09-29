@@ -147,6 +147,7 @@ node tools\migrate-sidecars.js --apply    … 実行
 | --- | --- |
 | Space / K | 再生・一時停止 |
 | ← / → | 10 秒戻る・進む |
+| Shift + ← / → | 5 分戻る・進む |
 | J / L | 30 秒戻る・進む |
 | ↑ / ↓ | 音量 |
 | F | 全画面 |
