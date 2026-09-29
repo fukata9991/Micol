@@ -1209,10 +1209,17 @@ async function fixActorThumbs() {
       if (!value || /^https?:\/\//i.test(value)) return block;
       const current = path.isAbsolute(value) ? value : path.join(dir, value);
       if (fs.existsSync(current) && !/[\\/]Jellyfin[\\/]/i.test(current)) return block;
-      const photo = ['.jpg', '.jpeg', '.png', '.webp']
+      let photo = ['.jpg', '.jpeg', '.png', '.webp']
         .flatMap((ext) => [name + ext, name.replace(/ /g, '_') + ext])
         .map((f) => path.join(dir, '.actors', f))
         .find((f) => fs.existsSync(f));
+      // .actors に無くても、今の画像（Jellyfin のフォルダなど）が残っていればコピーして使う
+      const ext = path.extname(current).toLowerCase();
+      if (!photo && fs.existsSync(current) && ['.jpg', '.jpeg', '.png', '.webp'].includes(ext) && !/[\\/:*?"<>|]/.test(name)) {
+        photo = path.join(dir, '.actors', name + (ext === '.jpeg' ? '.jpg' : ext));
+        fs.mkdirSync(path.dirname(photo), { recursive: true });
+        fs.copyFileSync(current, photo);
+      }
       if (!photo) {
         left.add(name);
         return block;
