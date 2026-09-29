@@ -522,6 +522,15 @@ async function fillBirthdates() {
       return p?.birth ? { birth: p.birth, from: p.name === name ? 'av-wiki' : `av-wiki(${p.name} の別名義)` } : null;
     },
     async (name) => {
+      // このAV女優の名前教えてwiki: 名前（と分かっている別名）のページ → 保存済みのページの別名
+      for (const n of [name, ...(aliases.get(name) || [])]) {
+        const p = await seesaaProfile(n);
+        if (p?.birth) return { birth: p.birth, from: n === name ? 'seesaawiki' : `seesaawiki(別名 ${n})` };
+      }
+      const q = seesaaKnownProfiles().find((x) => x.birth && x.aliases.includes(name));
+      return q ? { birth: q.birth, from: `seesaawiki(${q.name} の別名)` } : null;
+    },
+    async (name) => {
       for (const n of [name, ...(aliases.get(name) || [])]) {
         const b = birthFromWikitext(await wikipediaPage(n), n);
         if (b) return { birth: b, from: n === name ? 'Wikipedia' : `Wikipedia(別名 ${n})` };
@@ -598,6 +607,8 @@ function r18Aliases() {
     if (!map.has(a)) map.set(a, []);
     if (!map.get(a).includes(b)) map.get(a).push(b);
   };
+  // Micol で同じ女優にまとめた名義（data/aliases.json）
+  for (const g of readJson(path.join(DATA_DIR, 'aliases.json'))?.groups || []) for (const x of g) for (const y of g) add(x, y);
   // tokyo-face-fuck.com の別名（--tff で保存）
   for (const [name, list] of Object.entries(readJson(path.join(CACHE_DIR, 'tff', 'aliases.json')) || {})) {
     for (const x of [name, ...list]) for (const y of [name, ...list]) add(x, y);
@@ -942,6 +953,7 @@ TFF の行を埋めました: ${filled} 行（○）${missing.size ? `\n作品�
 // 取得済みのデータ（キャッシュ）から「同じ女優の名義」の組を集め、どの情報源が一致しているかを書き出す。
 // Micol はこのファイルを読み、2 か所以上の情報源で一致した組を自動で同じ女優にまとめる（残りは画面で確認）
 //   r18.dev: "希咲エマ（HARUKI、加藤はる希）"  av-wiki: 別名義  tokyo-face-fuck.com: 別名  Wikipedia: {{AV女優}} の 別名
+//   このAV女優の名前教えてwiki（seesaawiki）: 名前(別名)・旧名義&別名
 
 async function suggestAliases() {
   const pairs = new Map(); // 'a\tb' -> { names: [a, b], sources: Set }
@@ -998,6 +1010,17 @@ async function suggestAliases() {
   for (const r of roots) walk(r, videos);
   const library = new Set();
   for (const v of videos) for (const a of (await readNfo(v.nfoPath, v.dir))?.actors || []) library.add(a);
+  // このAV女優の名前教えてwiki: ライブラリの女優のページを読む（初回だけ時間がかかる。2 回目以降は保存したものを使う）
+  let n = 0;
+  for (const name of library) {
+    try {
+      const p = await seesaaProfile(name);
+      if (p?.aliases.length) addGroup([p.name, name, ...p.aliases], 'seesaawiki');
+    } catch (e) {
+      console.warn(`このAV女優の名前教えてwiki の取得に失敗: ${name} (${e.message})`);
+    }
+    if (++n % 50 === 0) console.log(`  このAV女優の名前教えてwiki: ${n} / ${library.size} 人`);
+  }
   const out = [...pairs.values()]
     .filter((p) => p.names.some((n) => library.has(n)))
     .map((p) => ({ names: p.names, sources: [...p.sources].sort() }))
@@ -1239,6 +1262,97 @@ async function fixActorThumbs() {
   console.log(`
 <thumb> を .actors の画像に書き換えました: ${thumbs} 件（NFO ${files} 件）
 ${files ? `書き換える前の NFO: ${backupDir}\n` : ''}${left.size ? `.actors に画像が無いため書き換えなかった名義: ${left.size}（${[...left].slice(0, 20).join('、')}${left.size > 20 ? ' …' : ''}）` : ''}`);
+}
+
+// ---------- このAV女優の名前教えてwiki（seesaawiki.jp/av_neme） ----------
+//
+// 女優ページ（https://seesaawiki.jp/av_neme/d/名前。名前は EUC-JP でエンコード）のプロフィールから
+// 名前・別名（旧名義）・生年月日を読む。ページがあるのは代表の名前だけ（旧名義では開けない）
+
+const SEESAA_CACHE = path.join(CACHE_DIR, 'seesaawiki');
+let eucTable = null;
+
+/** 文字列を EUC-JP でパーセントエンコードする（変換表はデコーダーから逆引きで作る） */
+function eucUrl(s) {
+  if (!eucTable) {
+    const dec = new TextDecoder('euc-jp');
+    eucTable = new Map();
+    for (let a = 0xa1; a <= 0xfe; a++) {
+      for (let b = 0xa1; b <= 0xfe; b++) {
+        const c = dec.decode(Uint8Array.of(a, b));
+        if (c.length === 1 && c !== '�' && !eucTable.has(c)) eucTable.set(c, [a, b]);
+      }
+    }
+    for (let b = 0xa1; b <= 0xdf; b++) eucTable.set(dec.decode(Uint8Array.of(0x8e, b)), [0x8e, b]);
+  }
+  let out = '';
+  for (const ch of s) {
+    if (ch.charCodeAt(0) < 0x80) out += encodeURIComponent(ch);
+    else if (eucTable.has(ch)) out += eucTable.get(ch).map((x) => '%' + x.toString(16)).join('');
+    else return null; // EUC-JP で表せない文字を含む名前は探さない
+  }
+  return out;
+}
+
+/** 女優ページのプロフィール: { name, aliases, birth }。ページが無ければ null */
+async function seesaaProfile(name) {
+  const enc = eucUrl(name);
+  if (!enc) return null;
+  fs.mkdirSync(SEESAA_CACHE, { recursive: true });
+  const cacheFile = path.join(SEESAA_CACHE, cacheName(name.replace(/[\\/:*?"<>|\s]/g, '_'), '.html'));
+  let html;
+  if (fs.existsSync(cacheFile)) html = fs.readFileSync(cacheFile, 'utf8');
+  else {
+    await sleep(2000); // 負担をかけないよう 2 秒に 1 回まで
+    const r = await politeFetch(`https://seesaawiki.jp/av_neme/d/${enc}`, { headers: { 'User-Agent': UA } });
+    if (r.status === 404) html = '';
+    else if (!r.ok) throw new Error(`HTTP ${r.status}`);
+    else html = new TextDecoder('euc-jp').decode(Buffer.from(await r.arrayBuffer()));
+    fs.writeFileSync(cacheFile, html);
+  }
+  return parseSeesaa(html, name);
+}
+
+/** 保存済みの女優ページのプロフィール一覧 */
+let seesaaKnown = null;
+function seesaaKnownProfiles() {
+  if (seesaaKnown) return seesaaKnown;
+  seesaaKnown = [];
+  if (!fs.existsSync(SEESAA_CACHE)) return seesaaKnown;
+  for (const f of fs.readdirSync(SEESAA_CACHE)) {
+    const p = parseSeesaa(fs.readFileSync(path.join(SEESAA_CACHE, f), 'utf8'), path.basename(f, '.html'));
+    if (p) seesaaKnown.push(p);
+  }
+  return seesaaKnown;
+}
+
+function parseSeesaa(html, name) {
+  if (!html) return null;
+  // プロフィールの部分（本文の先頭から「出演作品」の前まで）を「項目 -> 値」にする
+  //   表の書き方: <th>名前(別名)</th><td>青山ひかる（あおやまひかる）／香奈々…</td>
+  //   <pre> の書き方: 名前(女優名)：満月ひかり / 旧名義&別名：初咲里奈（うさきりな）・…
+  let area = html.slice(Math.max(0, html.indexOf('user-area')));
+  const end = area.search(/出演作品/);
+  area = area.slice(0, end > 0 ? end : 15000);
+  const kv = {};
+  for (const m of area.matchAll(/<th[^>]*>([\s\S]*?)<\/th>\s*<td[^>]*>([\s\S]*?)<\/td>/gi)) kv[strip(m[1]).replace(/&amp;/g, '&')] ||= strip(m[2]).replace(/&amp;/g, '&');
+  for (const l of area.replace(/<br\s*\/?>|<\/(tr|p|div|pre|li)>/gi, '\n').replace(/<[^>]+>/g, '').replace(/&amp;/g, '&').split('\n')) {
+    const m = /^\s*([^：:]{1,15}?)\s*[：:]\s*(.+?)\s*$/.exec(l);
+    if (m) kv[m[1].replace(/\s+/g, '')] ||= m[2];
+  }
+  const names = ['名前(女優名)', '名前(別名)', '名前', '旧名義&別名', '別名']
+    .map((k) => kv[k] || '')
+    .join('／')
+    .split(/[／/・、,，]/)
+    .map((s) => s.replace(/[（(][^（）()]*[）)]/g, '').trim())
+    .filter((s) => s && s.length <= 20 && !/^[–\-―\s]+$/.test(s));
+  const text = kv['生年月日'] || '';  const b = /(\d{4})\s*年\s*(\d{1,2})\s*月\s*(\d{1,2})\s*日/.exec(text);
+  const main = names[0] || name;
+  return {
+    name: main,
+    aliases: [...new Set(names.filter((n) => n !== main))],
+    birth: b ? normalizeDate(`${b[1]}-${b[2]}-${b[3]}`) || '' : '',
+  };
 }
 
 // ---------- 書き込み ----------

@@ -138,7 +138,7 @@ Kodi / Jellyfin 形式の NFO ファイルに対応しています（UTF-8 / Shi
 2. 一覧を Excel などで開き、「適用」列を確認します。`○` の行が書き込まれ、`?`（ファイル名からの候補で要確認）は
    `○` か `×` に変えてください。出演者（`／` 区切り）・生年月日・発売日も直せます
    - `node tools\fetch-actors.js --births` で、`○` の行の生年月日が空の出演者を女優名で検索して埋めます
-     （av-wiki.net の女優ページ → Wikipedia の AV 女優の記事 → みんなのAV の女優ページの順。別名でも探します。取得元は「備考」列）
+     （av-wiki.net の女優ページ → このAV女優の名前教えてwiki → Wikipedia の AV 女優の記事 → みんなのAV の女優ページの順。別名でも探します。取得元は「備考」列）
      みんなのAV は初回だけ五十音の女優一覧を全部読むため 30 分ほどかかります（`data\cache\minnano` に保存して 30 日間再利用）
    - `node tools\fetch-actors.js --titles` で、出演者が空の行を av-wiki.net の品番検索・タイトル検索で埋めます
      （品番で確かめられたものは `○`、タイトルだけで見つけたものは `?`）
@@ -148,7 +148,7 @@ Kodi / Jellyfin 形式の NFO ファイルに対応しています（UTF-8 / Shi
    FANZA の女優画像 → みんなのAV の写真の順に探します（既に `.actors` に画像がある名義は変更しません。別名の女優は画像を共有）
 6. `node tools\fetch-actors.js --fix-thumbs` … NFO の `<actor><thumb>` が Jellyfin のフォルダや存在しないファイルを指している場合、
    `.actors` の画像のパスに書き換えます（URL や実在する画像はそのまま。書き換える前の NFO は `data\backup` に保存）
-4. `node tools\fetch-actors.js --aliases` … 同じ女優の別名の候補（r18.dev・av-wiki・tokyo-face-fuck.com・Wikipedia）を
+4. `node tools\fetch-actors.js --aliases` … 同じ女優の別名の候補（r18.dev・av-wiki・tokyo-face-fuck.com・Wikipedia・このAV女優の名前教えてwiki）を
    `data\people-aliases-suggested.json` に書き出します。Micol は 2 か所以上の情報源で一致した組を自動で同じ女優にまとめ、
    残りは女優一覧の「別名の候補を確認」で「同じ女優」「違う」を選べます
 
