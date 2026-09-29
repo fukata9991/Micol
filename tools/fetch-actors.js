@@ -531,6 +531,14 @@ async function fillBirthdates() {
       return q ? { birth: q.birth, from: `seesaawiki(${q.name} の別名)` } : null;
     },
     async (name) => {
+      // 無修正動画エログ: 名前（と分かっている別名）が一致する女優ページ
+      for (const n of [name, ...(aliases.get(name) || [])]) {
+        const p = await erozukiProfile(n);
+        if (p?.birth) return { birth: p.birth, from: n === name ? 'erozuki' : `erozuki(別名 ${n})` };
+      }
+      return null;
+    },
+    async (name) => {
       for (const n of [name, ...(aliases.get(name) || [])]) {
         const b = birthFromWikitext(await wikipediaPage(n), n);
         if (b) return { birth: b, from: n === name ? 'Wikipedia' : `Wikipedia(別名 ${n})` };
@@ -1127,6 +1135,16 @@ async function fetchPhotos() {
         console.warn(`このAV女優の名前教えてwiki の取得に失敗: ${n} (${e.message})`);
       }
     }
+    // 無修正動画エログ の女優ページの写真
+    for (const n of group) {
+      if (photo) break;
+      try {
+        const ep = await erozukiProfile(n);
+        if (ep?.image) photo = await downloadPhoto(ep.image, '無修正動画エログ');
+      } catch (e) {
+        console.warn(`無修正動画エログ の取得に失敗: ${n} (${e.message})`);
+      }
+    }
     // 4. みんなのAV
     for (const n of group) {
       if (photo) break;
@@ -1367,6 +1385,54 @@ function parseSeesaa(html, name) {
     aliases: [...new Set(names.filter((n) => n !== main))],
     birth: b ? normalizeDate(`${b[1]}-${b[2]}-${b[3]}`) || '' : '',
   };
+}
+
+// ---------- 無修正動画エログ（av.erozuki.com） ----------
+//
+// 女優一覧（actress_list.html。1 ページに全員分）から 名前 -> 女優ページ（actress-2733.html）を作り、
+// 女優ページのプロフィールの「生年月日：1983年07月04日」と写真を読む（nowprinting の画像は使わない）
+
+const EROZUKI = 'https://av.erozuki.com/';
+const EROZUKI_CACHE = path.join(CACHE_DIR, 'erozuki');
+let erozukiNames = null;
+
+async function erozukiGet(rel) {
+  fs.mkdirSync(EROZUKI_CACHE, { recursive: true });
+  const cacheFile = path.join(EROZUKI_CACHE, rel.replace(/[\\/:*?"<>|]/g, '_'));
+  if (fs.existsSync(cacheFile)) return fs.readFileSync(cacheFile, 'utf8');
+  await sleep(2000); // 負担をかけないよう 2 秒に 1 回まで
+  const r = await politeFetch(EROZUKI + rel, { headers: { 'User-Agent': UA } });
+  const html = r.status === 404 ? '' : r.ok ? await r.text() : null;
+  if (html === null) throw new Error(`HTTP ${r.status}`);
+  fs.writeFileSync(cacheFile, html);
+  return html;
+}
+
+/** 名前 -> [女優ページの番号] */
+async function erozukiIndex() {
+  if (erozukiNames) return erozukiNames;
+  erozukiNames = new Map();
+  const html = await erozukiGet('actress_list.html');
+  for (const m of html.matchAll(/<a[^>]+href="[^"]*actress-(\d+)\.html"[^>]*>([\s\S]*?)<\/a>/g)) {
+    const name = strip(m[2]);
+    if (!name) continue;
+    if (!erozukiNames.has(name)) erozukiNames.set(name, []);
+    if (!erozukiNames.get(name).includes(m[1])) erozukiNames.get(name).push(m[1]);
+  }
+  return erozukiNames;
+}
+
+/** 名前が一致する女優が 1 人だけなら、そのプロフィール: { birth, image }。無ければ null */
+async function erozukiProfile(name) {
+  const ids = (await erozukiIndex()).get(name) || [];
+  if (ids.length !== 1) return null;
+  const html = await erozukiGet(`actress-${ids[0]}.html`);
+  if (!html) return null;
+  const b = /生年月日[：:]\s*(\d{4})年\s*(\d{1,2})月\s*(\d{1,2})日/.exec(strip(html));
+  const img = [...html.matchAll(/<img[^>]+src="([^"]+)"/g)]
+    .map((m) => new URL(m[1], `${EROZUKI}actress-${ids[0]}.html`).href)
+    .find((u) => /\.(jpe?g|png|webp)(\?|$)/i.test(u) && !/nowprinting|logo|icon|banner|noimage/i.test(u));
+  return { birth: b ? normalizeDate(`${b[1]}-${b[2]}-${b[3]}`) || '' : '', image: img || '' };
 }
 
 // ---------- 書き込み ----------
