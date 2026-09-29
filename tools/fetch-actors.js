@@ -276,7 +276,8 @@ async function findAvWikiByTitle(v) {
   const q = titleQuery(v.base);
   // 短いタイトル（"Mizuki 1" など）は別の作品に当たりやすいので検索しない
   const own = v.base.replace(/^[A-Za-z]{2,7}[-_ ]?\d{2,6}[A-Za-z]?/, '').normalize('NFKC').replace(/[\s\p{P}\p{S}\d]/gu, '');
-  if (q.length < 6 || own.length < 10) return null;
+  // ローマ字だけのタイトル（"Rena Matsumoto" など）も別の作品に当たりやすいので、漢字・かなを含むものだけ
+  if (q.length < 6 || own.length < 10 || !/[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}]/u.test(own)) return null;
   for (const w of (await avwikiSearchWorks(q)).slice(0, 3)) {
     const found = await parseAvWikiWork(await avwiki(w.url));
     if (found && sameWork(v, found) && titleRatio(v.base, found.title) >= 0.6) return { ...found, url: w.url };
