@@ -306,15 +306,53 @@ async function logout() {
   showAuth();
 }
 
+// ---------- スクロール位置 ----------
+// 戻る・進むで前の画面に戻ったときは、前にいた位置までスクロールする（新しく開いた画面は一番上から）。
+// 履歴の項目ごとに history.state に目印（micolKey）を付け、その目印でスクロール位置を覚える
+
+history.scrollRestoration = 'manual';
+const SCROLL_STORE = 'micol.scroll';
+let scrollPos = new Map();
+try { scrollPos = new Map(JSON.parse(sessionStorage.getItem(SCROLL_STORE) || '[]')); } catch {}
+let scrollKey = null; // 今の画面の目印（描画中は null にして、描き替えで位置を上書きしない）
+
+window.addEventListener('scroll', () => { if (scrollKey) scrollPos.set(scrollKey, window.scrollY); }, { passive: true });
+// 再読み込み後も戻れるよう、ページを離れるときに保存する（新しい 100 件まで）
+window.addEventListener('pagehide', () => {
+  try { sessionStorage.setItem(SCROLL_STORE, JSON.stringify([...scrollPos].slice(-100))); } catch {}
+});
+
+/** 今の履歴の項目の目印（無ければ付ける）と、既に付いていたか（= 戻る・進む・描き直しで来たか） */
+function historyKey() {
+  const had = history.state?.micolKey;
+  if (had) return { key: had, revisit: true };
+  const key = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+  history.replaceState({ ...(history.state || {}), micolKey: key }, '');
+  return { key, revisit: false };
+}
+
+/** 覚えておいた位置までスクロールする。画像の読み込みなどで高さが足りない間は少し待ってやり直す */
+function restoreScroll(y, seq) {
+  let tries = 0;
+  const attempt = () => {
+    if (seq !== routeSeq) return;
+    window.scrollTo(0, y);
+    if (Math.abs(window.scrollY - y) > 2 && ++tries < 20) setTimeout(attempt, 50);
+  };
+  attempt();
+}
+
 // ---------- ルーター ----------
 
 let cleanup = null;
 let routeSeq = 0;
 
 async function router() {
+  scrollKey = null;
   cleanup?.();
   cleanup = null;
   const seq = ++routeSeq;
+  const { key, revisit } = historyKey();
   const [p, qs = ''] = (location.hash.slice(1) || '/').split('?');
   const parts = p.split('/').filter(Boolean);
   const params = new URLSearchParams(qs);
@@ -344,7 +382,12 @@ async function router() {
   } catch (e) {
     if (seq === routeSeq) view.innerHTML = `<div class="empty"><h2>エラー</h2><p>${esc(e.message)}</p><a class="btn" href="#/">ホームへ</a></div>`;
   }
-  if (parts[0] !== 'play') window.scrollTo(0, 0);
+  if (seq !== routeSeq) return;
+  if (parts[0] !== 'play') {
+    if (revisit && scrollPos.has(key)) restoreScroll(scrollPos.get(key), seq);
+    else window.scrollTo(0, 0);
+  }
+  scrollKey = key;
 }
 
 window.addEventListener('hashchange', () => me && router());
