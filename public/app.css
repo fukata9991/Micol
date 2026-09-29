@@ -1,4 +1,6 @@
 :root {
+  /* サムネイル枠の縦横比。ライブラリでいちばん多い動画の比率に app.js が上書きする */
+  --thumb-ratio: 16 / 9;
   --bg: #101114;
   --surface: #1a1c21;
   --surface-2: #24272e;
@@ -89,7 +91,7 @@ body.playing main { padding: 0; max-width: none; }
 
 .card { display: block; min-width: 0; }
 .thumb {
-  position: relative; aspect-ratio: 16 / 9; border-radius: var(--radius); overflow: hidden;
+  position: relative; aspect-ratio: var(--thumb-ratio); border-radius: var(--radius); overflow: hidden;
   background: var(--surface) center / 40px no-repeat;
   background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='%23454a55'%3E%3Cpath d='M8 5v14l11-7z'/%3E%3C/svg%3E");
   outline: 2px solid transparent; outline-offset: 2px; transition: outline-color .15s;
@@ -103,7 +105,7 @@ body.playing main { padding: 0; max-width: none; }
 .thumb-img { inset: 0; width: 100%; height: 100%; object-fit: contain; }
 .thumb-bg { inset: -12%; width: 124%; height: 124%; object-fit: cover; filter: blur(16px) brightness(.5) saturate(1.2); }
 .noimg img { visibility: hidden; }
-/* 動画のパネルは余白を出さず枠いっぱいに表示する（はみ出した部分は切り取る） */
+/* 動画のパネルは枠いっぱいに表示する。比率が違う動画は、はみ出した分だけ切り取る */
 .card:not(.folder) .thumb-img, .hist-row .thumb-img { object-fit: cover; }
 .card:not(.folder) .thumb-bg, .hist-row .thumb-bg { display: none; }
 .badge {
@@ -130,7 +132,7 @@ body.playing main { padding: 0; max-width: none; }
 
 /* ---------- 詳細 ---------- */
 .detail { display: grid; grid-template-columns: minmax(0, 560px) minmax(0, 1fr); gap: 32px; margin-top: 18px; }
-.detail-thumb { position: relative; aspect-ratio: 16/9; border-radius: var(--radius); overflow: hidden; background: var(--surface); }
+.detail-thumb { position: relative; aspect-ratio: var(--thumb-ratio); border-radius: var(--radius); overflow: hidden; background: var(--surface); }
 .detail h1 { font-size: 26px; word-break: break-word; }
 .meta { display: flex; flex-wrap: wrap; gap: 8px; margin: 12px 0 18px; }
 .meta span { padding: 2px 10px; border-radius: 6px; background: var(--surface-2); font-size: 13px; color: var(--muted); }

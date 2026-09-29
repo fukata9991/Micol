@@ -169,11 +169,33 @@ route('GET', '/api/home', ({ prog }) => {
     libraries: library.roots.map((id) => folderDto(library.folders.get(id))),
     resume,
     recent,
+    thumbRatio: thumbRatio(),
     scanning: library.scanning,
   };
 });
 
-route('GET', '/api/libraries', () => library.roots.map((id) => folderDto(library.folders.get(id))));
+/** サムネイル枠の縦横比: ライブラリでいちばん多い動画の比率（近い比率はまとめ、3:4〜2.4:1 に収める） */
+function thumbRatio() {
+  const groups = new Map();
+  for (const it of library.items.values()) {
+    const v = it.probe?.video;
+    if (!(v?.width > 0 && v?.height > 0)) continue;
+    const r = v.width / v.height;
+    const key = Math.round(r * 10); // 2.35:1 と 2.39:1 のような近い比率はまとめる
+    const g = groups.get(key) || { n: 0, sum: 0 };
+    g.n++;
+    g.sum += r;
+    groups.set(key, g);
+  }
+  let best = null;
+  for (const g of groups.values()) if (!best || g.n > best.n) best = g;
+  return Math.min(2.4, Math.max(0.75, best ? best.sum / best.n : 16 / 9));
+}
+
+route('GET', '/api/libraries', () => ({
+  libraries: library.roots.map((id) => folderDto(library.folders.get(id))),
+  thumbRatio: thumbRatio(),
+}));
 
 // 視聴履歴（新しい順）。未視聴に戻したものなど、位置も視聴済みも無いものは含めない
 route('GET', '/api/history', ({ prog }) => {
