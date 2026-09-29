@@ -146,6 +146,8 @@ Kodi / Jellyfin 形式の NFO ファイルに対応しています（UTF-8 / Shi
 5. `node tools\fetch-actors.js --photos` … 女優の画像を、その作品の動画フォルダの `.actors\名義.jpg` に保存します。
    NFO の `<actor><thumb>` にある画像（URL・Jellyfin のフォルダなどのローカルの画像）を取り込み、無ければ
    FANZA の女優画像 → みんなのAV の写真の順に探します（既に `.actors` に画像がある名義は変更しません。別名の女優は画像を共有）
+6. `node tools\fetch-actors.js --fix-thumbs` … NFO の `<actor><thumb>` が Jellyfin のフォルダや存在しないファイルを指している場合、
+   `.actors` の画像のパスに書き換えます（URL や実在する画像はそのまま。書き換える前の NFO は `data\backup` に保存）
 4. `node tools\fetch-actors.js --aliases` … 同じ女優の別名の候補（r18.dev・av-wiki・tokyo-face-fuck.com・Wikipedia）を
    `data\people-aliases-suggested.json` に書き出します。Micol は 2 か所以上の情報源で一致した組を自動で同じ女優にまとめ、
    残りは女優一覧の「別名の候補を確認」で「同じ女優」「違う」を選べます

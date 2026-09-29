@@ -7,6 +7,7 @@
 //   node tools/fetch-actors.js --romaji                … ファイル名がローマ字の女優名だけの行（TFF-109 Rena Matsumoto 1 など）を日本語名で埋める
 //   node tools/fetch-actors.js --aliases               … 同じ女優の別名の候補を data/people-aliases-suggested.json に書き出す（Micol が取り込む）
 //   node tools/fetch-actors.js --photos                … 女優の画像を探して、動画フォルダの .actors/名義.jpg に保存する
+//   node tools/fetch-actors.js --fix-thumbs            … NFO の出演者の画像のパス（Jellyfin のフォルダなど）を .actors の画像に書き換える
 //   node tools/fetch-actors.js --tff                   … TFF（Tokyo Face Fuck）の行を tokyo-face-fuck.com の出演女優リストで埋める
 //   node tools/fetch-actors.js --test MILK-163         … 1 作品だけ検索して結果を表示する（確認用）
 //   --no-web を付けるとネットには接続せず、ファイル名からだけ取得する
@@ -1172,6 +1173,64 @@ async function minnanoPhotoUrl(name) {
   return /no_?image|noimg|dummy/i.test(url) ? '' : url;
 }
 
+// ---------- NFO の出演者の画像のパスを .actors に書き換える（--fix-thumbs） ----------
+//
+// <actor><thumb> が Jellyfin のフォルダ（…\Jellyfin\…）や存在しないファイルを指していて、
+// 動画フォルダの .actors に同じ名義の画像がある場合、<thumb> をその画像のパスに書き換える。
+// URL や、別の場所にある実在の画像はそのまま。書き換える前の NFO は data/backup/thumbs-日時/ に残す
+
+async function fixActorThumbs() {
+  const backupDir = path.join(DATA_DIR, 'backup', `thumbs-${new Date().toISOString().replace(/[:.]/g, '-')}`);
+  const videos = [];
+  for (const r of roots) walk(r, videos);
+  const nfos = new Map(); // 同じ NFO（movie.nfo など）を 2 回処理しない
+  for (const v of videos) if (fs.existsSync(v.nfoPath)) nfos.set(v.nfoPath, v.dir);
+  let files = 0;
+  let thumbs = 0;
+  const left = new Set(); // .actors に画像が無く、書き換えられなかった名義
+  for (const [file, dir] of nfos) {
+    const buf = fs.readFileSync(file);
+    const bom = buf[0] === 0xef && buf[1] === 0xbb && buf[2] === 0xbf;
+    let xml;
+    try {
+      xml = new TextDecoder('utf-8', { fatal: true }).decode(bom ? buf.subarray(3) : buf);
+    } catch {
+      continue; // UTF-8 でない NFO は書き換えない
+    }
+    let changed = 0;
+    const out = xml.replace(/<actor(\s[^>]*)?>([\s\S]*?)<\/actor>/gi, (block) => {
+      const name = strip(/<name>([\s\S]*?)<\/name>/i.exec(block)?.[1] || '');
+      const m = /(<thumb(?:\s[^>]*)?>)([^<]*)(<\/thumb>)/i.exec(block);
+      if (!name || !m) return block;
+      const value = strip(m[2]);
+      if (!value || /^https?:\/\//i.test(value)) return block;
+      const current = path.isAbsolute(value) ? value : path.join(dir, value);
+      if (fs.existsSync(current) && !/[\\/]Jellyfin[\\/]/i.test(current)) return block;
+      const photo = ['.jpg', '.jpeg', '.png', '.webp']
+        .flatMap((ext) => [name + ext, name.replace(/ /g, '_') + ext])
+        .map((f) => path.join(dir, '.actors', f))
+        .find((f) => fs.existsSync(f));
+      if (!photo) {
+        left.add(name);
+        return block;
+      }
+      changed++;
+      return block.replace(m[0], () => m[1] + photo.replace(/&/g, '&amp;').replace(/</g, '&lt;') + m[3]);
+    });
+    if (!changed) continue;
+    const dst = path.join(backupDir, file.replace(/^([A-Za-z]):/, '$1'));
+    fs.mkdirSync(path.dirname(dst), { recursive: true });
+    fs.copyFileSync(file, dst);
+    const data = Buffer.from(out, 'utf8');
+    fs.writeFileSync(file, bom ? Buffer.concat([Buffer.from([0xef, 0xbb, 0xbf]), data]) : data);
+    files++;
+    thumbs += changed;
+  }
+  console.log(`
+<thumb> を .actors の画像に書き換えました: ${thumbs} 件（NFO ${files} 件）
+${files ? `書き換える前の NFO: ${backupDir}\n` : ''}${left.size ? `.actors に画像が無いため書き換えなかった名義: ${left.size}（${[...left].slice(0, 20).join('、')}${left.size > 20 ? ' …' : ''}）` : ''}`);
+}
+
 // ---------- 書き込み ----------
 
 async function applyReview() {
@@ -1325,5 +1384,6 @@ else if (args.includes('--romaji')) await fillFromRomaji();
 else if (args.includes('--tff')) await fillFromTff();
 else if (args.includes('--aliases')) await suggestAliases();
 else if (args.includes('--photos')) await fetchPhotos();
+else if (args.includes('--fix-thumbs')) await fixActorThumbs();
 else if (apply) await applyReview();
 else await fetchAll();
