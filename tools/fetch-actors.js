@@ -1,16 +1,17 @@
-// 動画の出演者（女優）・発売日を取得して NFO に書き込む
+// 動画の出演者（女優）・発売日・生年月日を取得して NFO に書き込む
 //
 //   node tools/fetch-actors.js [フォルダ ...]          … 取得して確認用の一覧 data/actors-review.csv を作る（NFO は変更しない）
 //   node tools/fetch-actors.js --apply                 … 一覧の「適用」が ○ の行を NFO に書き込む
 //   node tools/fetch-actors.js --test MILK-163         … 1 作品だけ検索して結果を表示する（確認用）
 //   --no-web を付けるとネットには接続せず、ファイル名からだけ取得する
 //
-// 取得元
-//   1. r18.dev（FANZA の作品情報を公開しているデータベース）: ファイル名の品番（MILK-163 など）で作品を探し、
-//      出演者・発売日を取得する
-//   2. ファイル名: 1 で出演者が分からない作品は、ファイル名の末尾の名前（"… 青井いちご" "(一条みお)" など）を候補にする。
+// 取得元（ファイル名の品番 MILK-163 などで探す）
+//   1. r18.dev（FANZA の作品情報を公開しているデータベース）: 出演者・発売日
+//   2. av-wiki.net（素人・企画作品の出演者のまとめサイト）: 1 で出演者が分からない作品の出演者、
+//      および出演者の生年月日（女優ページから）
+//   3. ファイル名: 1・2 で出演者が分からない作品は、ファイル名の末尾の名前（"… 青井いちご" "(一条みお)" など）を候補にする。
 //      既に他の作品に出演者として登録されている名前なら ○、そうでなければ ?（確認が必要）にする
-//   生年月日は自動では取得しない。一覧の「生年月日」列に入力すると NFO に書き込む
+//   独自の品番が別の作品と同じ場合があるので、1・2 は見つかった作品のタイトルがファイル名と似ているものだけ使う
 //
 // 書き込みのルール
 //   - 出演者が既に入っている NFO の出演者は変更しない（生年月日だけ足す）
@@ -29,6 +30,8 @@ const apply = args.includes('--apply');
 const web = !args.includes('--no-web');
 const REVIEW = path.join(DATA_DIR, 'actors-review.csv');
 const R18_CACHE = path.join(CACHE_DIR, 'r18');
+const AVWIKI_CACHE = path.join(CACHE_DIR, 'avwiki');
+const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) Micol/1.0 (personal media library)';
 const SKIP_DIRS = new Set(['$recycle.bin', 'system volume information', '@eadir', '.trash']);
 // 未成年を性的に扱うタイトル（対象外にする）
 const MINOR = /小[○●◯〇]?学生|小[○●◯〇]生|中[○●◯〇]?学生|中[○●◯〇]生|(?<![A-Za-z])[JＪ][CＣSＳ](?![A-Za-z])|ロ[○●◯〇]ータ|ロリータ|幼女|女児|児童|幼穴|園児/;
@@ -41,8 +44,9 @@ if (!roots.length) roots.push(...(config.libraries || []).map((l) => l.path).fil
 
 async function fetchAll() {
   if (!roots.length) return fail('対象のフォルダを指定してください（例: node tools/fetch-actors.js D:\\Video D:\\etc）');
-  console.log(web ? '作品の検索: r18.dev' : 'ネットには接続せず、ファイル名からだけ取得します');
+  console.log(web ? '作品の検索: r18.dev・av-wiki.net' : 'ネットには接続せず、ファイル名からだけ取得します');
   fs.mkdirSync(R18_CACHE, { recursive: true });
+  fs.mkdirSync(AVWIKI_CACHE, { recursive: true });
 
   const videos = [];
   for (const r of roots) walk(r, videos);
@@ -60,63 +64,85 @@ async function fetchAll() {
     }
   }
 
-  // 1. 品番で検索
+  // 1・2. 品番で検索（r18.dev → av-wiki.net）
+  const sources = {
+    'r18.dev': { find: findR18, failed: 0, ok: 0, off: false },
+    'av-wiki': { find: findAvWiki, failed: 0, ok: 0, off: false },
+  };
+  const birthOf = new Map(); // 名前 -> 生年月日（av-wiki の女優ページ）
   let done = 0;
-  let failed = 0;
   for (const v of videos) {
     if (v.excluded) continue;
     v.code = productCode(v.base);
-    if (web && v.code) {
+    if (!web || !v.code) continue;
+    v.mismatch = [];
+    for (const [name, src] of Object.entries(sources)) {
+      if (src.off) continue;
+      let found = null;
       try {
-        v.found = await findR18(v.code);
-        // 独自の品番が FANZA の別の作品と同じ場合があるので、タイトルが似ていなければ別の作品とみなす
-        if (v.found && !sameWork(v, v.found)) {
-          v.mismatch = v.found.title;
-          v.found = null;
-        }
+        found = await src.find(v.code);
+        src.ok++;
       } catch (e) {
-        console.warn(`r18.dev の検索に失敗: ${v.code} (${e.message})`);
-        // 続けて失敗する場合（サービス停止・仕様変更など）は打ち切る
-        if (++failed >= 10 && !videos.some((x) => x.found)) return fail('r18.dev に接続できないため中止しました。--no-web でファイル名からだけ取得できます');
+        console.warn(`${name} の検索に失敗: ${v.code} (${e.message})`);
+        // 続けて失敗する場合（サービス停止・仕様変更など）はそのサービスを使わない
+        if (++src.failed >= 10 && !src.ok) {
+          src.off = true;
+          console.warn(`${name} に接続できないため、以降は使いません`);
+        }
       }
-      for (const a of v.found?.actresses || []) known.add(a);
-      if (++done % 50 === 0) console.log(`  ${done} 本を検索`);
+      // 独自の品番が別の作品と同じ場合があるので、タイトルが似ていなければ別の作品とみなす
+      if (found && !sameWork(v, found)) {
+        v.mismatch.push(`${name}: ${found.title}`);
+        found = null;
+      }
+      v[name === 'r18.dev' ? 'r18' : 'wiki'] = found;
     }
+    for (const a of v.r18?.actresses || []) known.add(a);
+    for (const a of v.wiki?.actresses || []) {
+      known.add(a.name);
+      if (a.birthdate) birthOf.set(a.name, a.birthdate);
+    }
+    if (++done % 50 === 0) console.log(`  ${done} 本を検索`);
   }
 
-  // 2. ファイル名（1 で出演者が分からなかったもの）
+  // 3. ファイル名（1・2 で出演者が分からなかったもの）
   for (const v of videos) {
     if (v.excluded) continue;
     const current = v.nfo?.actors || [];
-    const released = v.found?.date || '';
+    const released = v.r18?.date || v.wiki?.date || '';
+    const dateFrom = released ? `+${v.r18?.date ? 'r18.dev' : 'av-wiki'}(発売日)` : '';
     let names = [];
     let source = '';
     if (current.length) {
-      // 出演者は変えない（生年月日の入力用に今の出演者を並べる）
+      // 出演者は変えない（生年月日を足すために今の出演者を並べる）
       names = current;
-      source = released ? '登録済み+r18.dev(発売日)' : '登録済み';
-    } else if (v.found?.actresses.length) {
-      names = v.found.actresses;
+      source = '登録済み' + dateFrom;
+    } else if (v.r18?.actresses.length) {
+      names = v.r18.actresses;
       source = 'r18.dev';
+    } else if (v.wiki?.actresses.length) {
+      names = v.wiki.actresses.map((a) => a.name);
+      source = 'av-wiki' + (v.r18?.date ? '+r18.dev(発売日)' : '');
     } else {
       names = namesFromFilename(v.base, known);
-      if (names.length) source = released ? 'r18.dev(発売日)+ファイル名' : 'ファイル名';
-      else if (released) source = 'r18.dev(発売日)';
+      if (names.length) source = 'ファイル名' + dateFrom;
+      else if (released) source = dateFrom.slice(1);
     }
-    // 書き込むものがあるか: 新しい出演者 / 無かった発売日
-    const hasNew = (!current.length && names.length) || (released && !v.nfo?.premiered);
-    const ok = !hasNew ? '-' : source.includes('ファイル名') && names.some((n) => !known.has(n)) ? '?' : '○';
+    const births = names.map((n) => v.nfo?.actorBirthdates?.[n] || birthOf.get(n) || '');
+    // 書き込むものがあるか: 新しい出演者 / 無かった発売日 / 無かった生年月日
+    const hasNew = (!current.length && names.length) || (released && !v.nfo?.premiered) || births.some((b, i) => b && !v.nfo?.actorBirthdates?.[names[i]]);
+    const ok = !hasNew ? '-' : source.startsWith('ファイル名') && names.some((n) => !known.has(n)) ? '?' : '○';
     rows.push({
       適用: ok,
       品番: v.code || '',
       取得元: source || 'なし',
       出演者: names.join('／'),
-      生年月日: names.map((n) => v.nfo?.actorBirthdates?.[n] || '-').join('／'),
+      生年月日: births.map((b) => b || '-').join('／'),
       発売日: released,
       現在の出演者: current.join('／'),
       現在の発売日: v.nfo?.premiered || '',
       ファイル: v.path,
-      備考: v.mismatch ? `品番は一致したがタイトルが違うため除外: ${v.mismatch}` : '',
+      備考: v.mismatch?.length ? `品番は一致したがタイトルが違うため除外（${v.mismatch.join(' / ')}）` : '',
     });
   }
 
@@ -125,12 +151,14 @@ async function fetchAll() {
   const count = (f) => rows.filter(f).length;
   console.log(`
 一覧を作成しました: ${REVIEW}
-  r18.dev で見つかった    : ${count((r) => r.取得元.includes('r18.dev'))} 本
-  出演者をファイル名から  : ${count((r) => r.取得元.includes('ファイル名'))} 本（うち要確認 ? ${count((r) => r.適用 === '?')} 本）
+  出演者を r18.dev から   : ${count((r) => r.取得元 === 'r18.dev')} 本
+  出演者を av-wiki から   : ${count((r) => r.取得元.startsWith('av-wiki'))} 本
+  出演者をファイル名から  : ${count((r) => r.取得元.startsWith('ファイル名'))} 本（うち要確認 ? ${count((r) => r.適用 === '?')} 本）
+  生年月日が分かった      : ${count((r) => /\d/.test(r.生年月日))} 本
   書き込むものが無い      : ${count((r) => r.適用 === '-')} 本（見つからなかった・既に入っている）
   対象外（未成年を扱うタイトル）: ${excluded} 本
 「適用」列が ○ の行が書き込まれます。? の行は確認して ○ か × に変えてください。
-出演者・発売日は直せます。生年月日を入力する場合は、その行の「適用」も ○ にしてください。
+出演者・発売日・生年月日は直せます（「適用」が - の行を書き込みたい場合は ○ にしてください）。
 確認したら: node tools/fetch-actors.js --apply`);
 }
 
@@ -205,7 +233,8 @@ async function r18(query) {
 function sameWork(v, found) {
   const norm = (s) => String(s || '').normalize('NFKC').toLowerCase().replace(/[\s\p{P}\p{S}●○◯〇]/gu, '');
   const mine = norm(v.base) + norm(v.nfo?.title) + norm(v.nfo?.originalTitle);
-  if (found.actresses.some((a) => a.length >= 2 && mine.includes(norm(a)))) return true;
+  const names = found.actresses.map((a) => (typeof a === 'string' ? a : a.name));
+  if (names.some((a) => a.length >= 2 && mine.includes(norm(a)))) return true;
   const t = norm(found.title);
   // a の 2 文字ずつの並びのうち、b に含まれる割合
   const ratio = (a, b) => {
@@ -219,12 +248,77 @@ function sameWork(v, found) {
   return ratio(t, mine) >= 0.4 || (own.length >= 6 && ratio(own, t) >= 0.8);
 }
 
+// ---------- av-wiki.net ----------
+
+/** 品番の作品ページ（https://av-wiki.net/mism-105/）から出演者・配信開始日を取る。無ければ null */
+async function findAvWiki(code) {
+  const html = await avwiki(`https://av-wiki.net/${encodeURIComponent(code.toLowerCase())}/`);
+  if (!html) return null;
+  const dl = {};
+  for (const m of html.matchAll(/<dt[^>]*>([\s\S]*?)<\/dt>\s*<dd[^>]*>([\s\S]*?)<\/dd>/g)) {
+    const key = strip(m[1]).replace(/[：:]$/, '');
+    if (key && !(key in dl)) dl[key] = m[2];
+  }
+  // 別の品番のページに転送された場合などは使わない
+  if (dl['メーカー品番'] && strip(dl['メーカー品番']).toUpperCase() !== code) return null;
+  const title = strip(/<title>([\s\S]*?)<\/title>/.exec(html)?.[1] || '')
+    .replace(/^[^：]*：/, '')
+    .replace(/に出てるAV女優.*$/, '');
+  const actresses = [];
+  for (const m of (dl['AV女優名'] || '').matchAll(/<a[^>]*href="([^"]+)"[^>]*>([\s\S]*?)<\/a>/g)) {
+    const name = strip(m[2]);
+    if (name && !actresses.some((a) => a.name === name)) actresses.push({ name, birthdate: await avwikiBirth(m[1]) });
+  }
+  return { title, date: normalizeDate(strip(dl['配信開始日'] || dl['発売日'] || '')) || '', actresses };
+}
+
+/** 女優ページの「生年月日」（1993年6月3日 → 1993-06-03）。無ければ '' */
+async function avwikiBirth(url) {
+  if (!/^https:\/\/av-wiki\.net\/av-actress\//.test(url)) return '';
+  const html = await avwiki(url);
+  // <dt>生年月日<span class="small">：</span></dt><dd>1993年6月3日</dd>
+  for (const m of (html || '').matchAll(/<dt[^>]*>([\s\S]*?)<\/dt>\s*<dd[^>]*>([\s\S]*?)<\/dd>/g)) {
+    if (strip(m[1]).replace(/[：:]$/, '') === '生年月日') return normalizeDate(strip(m[2])) || '';
+  }
+  return '';
+}
+
+async function avwiki(url) {
+  const cacheFile = path.join(AVWIKI_CACHE, `${url.replace(/^https:\/\/av-wiki\.net\//, '').replace(/[\\/:*?"<>|\s%]/g, '_')}.html`);
+  if (fs.existsSync(cacheFile)) {
+    const c = fs.readFileSync(cacheFile, 'utf8');
+    return c === '' ? null : c;
+  }
+  await sleep(1500); // 負担をかけないよう 1.5 秒に 1 回まで
+  const r = await fetch(url, { headers: { 'User-Agent': UA }, signal: AbortSignal.timeout(30000) });
+  if (r.status === 404) {
+    fs.writeFileSync(cacheFile, '');
+    return null;
+  }
+  if (!r.ok) throw new Error(`HTTP ${r.status}`);
+  const html = await r.text();
+  fs.writeFileSync(cacheFile, html);
+  return html;
+}
+
+function strip(html) {
+  return String(html)
+    .replace(/<[^>]+>/g, '')
+    .replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"').replace(/&#0?39;/g, "'").replace(/&#8211;/g, '–').replace(/&nbsp;/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
 async function testOne(code) {
   code = productCode(code) || code;
   fs.mkdirSync(R18_CACHE, { recursive: true });
+  fs.mkdirSync(AVWIKI_CACHE, { recursive: true });
   console.log(`r18.dev で検索: ${code}`);
   const item = await findR18(code);
   console.log(item ? JSON.stringify(item, null, 2) : '見つかりませんでした');
+  console.log(`av-wiki.net で検索: ${code}`);
+  const wiki = await findAvWiki(code);
+  console.log(wiki ? JSON.stringify(wiki, null, 2) : '見つかりませんでした');
 }
 
 // ---------- ファイル名からの推定 ----------
