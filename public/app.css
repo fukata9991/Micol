@@ -177,6 +177,15 @@ body.playing main { padding: 0; max-width: none; }
 .picker-list li { padding: 8px 12px; cursor: pointer; border-bottom: 1px solid var(--border); }
 .picker-list li:hover { background: var(--surface-2); }
 .modal-actions { display: flex; justify-content: flex-end; gap: 10px; }
+.aliases { margin: 6px 0; display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+.alias-hint { margin: 0 0 12px; }
+.alias-toggle { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; color: var(--muted); margin-bottom: 8px; }
+.alias-row[hidden] { display: none; }
+.alias-list { list-style: none; margin: 0; padding: 0; }
+.alias-row { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 16px; padding: 10px 0; border-bottom: 1px solid var(--border); }
+.alias-names { flex: 1; min-width: 240px; }
+.alias-src { font-size: 12px; }
+.alias-actions { display: flex; gap: 6px; }
 
 #toast {
   position: fixed; left: 50%; bottom: 28px; transform: translate(-50%, 20px); z-index: 100;

@@ -325,7 +325,7 @@ async function router() {
   $('.topbar').classList.toggle('searching', parts[0] === 'search');
   closeNav();
   setAccountMenu(false);
-  markNav(parts[0] === 'folder' ? `#/folder/${parts[1]}` : parts[0] === 'person' ? '#/people' : `#/${parts[0] || ''}`);
+  markNav(parts[0] === 'folder' ? `#/folder/${parts[1]}` : parts[0] === 'person' || parts[0] === 'aliases' ? '#/people' : `#/${parts[0] || ''}`);
   try {
     switch (parts[0]) {
       case undefined: await renderHome(view, seq); break;
@@ -336,6 +336,7 @@ async function router() {
       case 'history': await renderHistory(view); break;
       case 'people': await renderPeople(view); break;
       case 'person': await renderPerson(view, params.get('name') || ''); break;
+      case 'aliases': await renderAliasSuggestions(view); break;
       case 'settings': await renderSettings(view); break;
       case 'account': renderAccount(view); break;
       default: view.innerHTML = '<div class="empty">ページが見つかりません</div>';
@@ -721,8 +722,8 @@ function personPhoto(p, lazy = true) {
 function personCard(p) {
   return `<a class="card person" href="${personHref(p.name)}">
     ${personPhoto(p)}
-    <div class="card-title" title="${esc(p.name)}">${esc(p.name)}</div>
-    <div class="card-sub">${p.count} 作品</div>
+    <div class="card-title" title="${esc([p.name, ...(p.aliases || [])].join('／'))}">${esc(p.name)}</div>
+    <div class="card-sub">${p.count} 作品${p.aliases?.length ? ` ・ 別名 ${p.aliases.length}` : ''}</div>
   </a>`;
 }
 
@@ -745,6 +746,7 @@ async function renderPeople(view) {
       </select>
       <span class="muted people-count"></span>
     </div>
+    ${d.suggestions ? `<p class="hint alias-hint">同じ女優かもしれない名義が ${d.suggestions} 組あります。<a href="#/aliases">別名の候補を確認</a></p>` : ''}
     <div class="grid people-grid"></div>`;
   const filter = $('.people-filter', view);
   const sortSel = $('.people-sort', view);
@@ -754,7 +756,7 @@ async function renderPeople(view) {
   function draw() {
     const q = filter.value.trim().normalize('NFKC').toLowerCase();
     const list = d.people
-      .filter((p) => !q || p.name.normalize('NFKC').toLowerCase().includes(q))
+      .filter((p) => !q || [p.name, ...(p.aliases || [])].some((n) => n.normalize('NFKC').toLowerCase().includes(q)))
       .sort((a, b) => (sortSel.value === 'count' ? b.count - a.count : 0) || collator.compare(a.name, b.name));
     $('.people-count', view).textContent = `${list.length} 人`;
     grid.innerHTML = list.length ? list.map(personCard).join('') : '<div class="empty">見つかりませんでした</div>';
@@ -777,6 +779,19 @@ async function renderPerson(view, name) {
       <div>
         <h1 class="page-title">${esc(d.name)}</h1>
         <div class="muted">${d.items.length} 作品</div>
+        <div class="aliases">${d.aliases.length ? `別名：${d.aliases.map((a) => esc(a)).join('、')}` : '<span class="muted">別名 なし</span>'}
+          ${me.admin ? '<button class="btn small" id="edit-aliases">別名を編集</button><button class="btn small" id="merge-person">別の女優と統合</button>' : ''}</div>
+        <form class="birth-form" id="alias-form" hidden>
+          <input name="aliases" size="40" placeholder="別名（、または , で区切る）" aria-label="別名">
+          <button class="btn small primary">保存</button>
+          <button type="button" class="btn small" data-act="cancel">キャンセル</button>
+        </form>
+        <form class="birth-form" id="merge-form" hidden>
+          <input name="other" list="people-names" size="24" placeholder="統合する女優の名前" aria-label="統合する女優">
+          <datalist id="people-names"></datalist>
+          <button class="btn small primary">統合</button>
+          <button type="button" class="btn small" data-act="cancel">キャンセル</button>
+        </form>
         <div class="birth">${d.birthdate ? `生年月日 ${esc(d.birthdate)}（${ageLabel(d.birthdate, todayStr())}）` : '<span class="muted">生年月日 未設定</span>'}
           ${me.admin ? '<button class="btn small" id="edit-birth">生年月日を設定</button>' : ''}</div>
         <form class="birth-form" id="birth-form" hidden>
@@ -789,11 +804,54 @@ async function renderPerson(view, name) {
       </div>
     </div>
     <div class="grid">${d.items.map((it) => itemCard(it, [
+      it.credited ? `${it.credited} 名義` : '',
       it.released ? `発売 ${it.released}` : '',
       ageLabel(d.birthdate, it.released) ? `当時 ${ageLabel(d.birthdate, it.released)}` : '',
     ].filter(Boolean).join(' ・ '))).join('')}</div>`;
 
   if (!me.admin) return;
+  // 別名の編集: 入れた名義を同じ女優にまとめる（外した名義は別の女優に戻る）
+  const aliasForm = $('#alias-form', view);
+  $('#edit-aliases', view).onclick = () => {
+    aliasForm.hidden = false;
+    aliasForm.aliases.value = d.aliases.join('、');
+    aliasForm.aliases.focus();
+  };
+  aliasForm.onsubmit = async (e) => {
+    e.preventDefault();
+    const list = aliasForm.aliases.value.split(/[、,，\n]/).map((s) => s.trim()).filter(Boolean);
+    try {
+      const p = await api(`/api/person/aliases?name=${encodeURIComponent(d.name)}`, { method: 'PUT', body: { aliases: list } });
+      toast('別名を保存しました');
+      location.hash = personHref(p.name); // 作品数で代表名が変わることがある
+      router();
+    } catch (err) { toast(err.message); }
+  };
+  aliasForm.querySelector('[data-act="cancel"]').onclick = () => { aliasForm.hidden = true; };
+  // 統合: 選んだ女優の名義をすべてこの女優の別名にする
+  const mergeForm = $('#merge-form', view);
+  $('#merge-person', view).onclick = async () => {
+    mergeForm.hidden = false;
+    mergeForm.other.focus();
+    try {
+      const all = (await api('/api/people')).people.filter((p) => p.name !== d.name);
+      $('#people-names', view).innerHTML = all.map((p) => `<option value="${esc(p.name)}">${p.count} 作品</option>`).join('');
+    } catch {}
+  };
+  mergeForm.onsubmit = async (e) => {
+    e.preventDefault();
+    const other = mergeForm.other.value.trim();
+    if (!other) return toast('統合する女優の名前を入力してください');
+    if (!confirm(`「${other}」を「${d.name}」と同じ女優としてまとめますか？`)) return;
+    try {
+      const p = await api(`/api/person/merge?name=${encodeURIComponent(d.name)}`, { method: 'POST', body: { name: other } });
+      toast('統合しました');
+      location.hash = personHref(p.name);
+      router();
+    } catch (err) { toast(err.message); }
+  };
+  mergeForm.querySelector('[data-act="cancel"]').onclick = () => { mergeForm.hidden = true; };
+
   const form = $('#birth-form', view);
   const save = async (birthdate) => {
     try {
@@ -816,6 +874,56 @@ async function renderPerson(view, name) {
     const act = e.target.closest('[data-act]')?.dataset.act;
     if (act === 'cancel') form.hidden = true;
     if (act === 'clear' && confirm(`${d.name} の生年月日を削除しますか？`)) save('');
+  });
+}
+
+// ---------- 別名の候補（1 か所の情報源だけで見つかった組） ----------
+
+async function renderAliasSuggestions(view) {
+  const d = await api('/api/people/suggestions');
+  const row = (s, i) => {
+    const who = (p) => (p.person
+      ? `<a href="${personHref(p.person)}">${esc(p.name)}</a><span class="muted">（${p.person !== p.name ? `${esc(p.person)} の別名・` : ''}${p.count} 作品）</span>`
+      : `${esc(p.name)}<span class="muted">（ライブラリに作品なし）</span>`);
+    return `<li class="alias-row" data-i="${i}">
+      <div class="alias-names">${who(s.people[0])} ⇔ ${who(s.people[1])}</div>
+      <div class="muted alias-src">情報源: ${s.sources.map(esc).join('、')}</div>
+      <div class="alias-actions">
+        <button class="btn small primary" data-act="accept">同じ女優</button>
+        <button class="btn small" data-act="reject">違う</button>
+      </div>
+    </li>`;
+  };
+  // どちらの名義にも作品がある組を先に（作品のない名義との組は検索用の別名になるだけなので、既定では隠す）
+  const both = (s) => s.people.every((p) => p.person);
+  d.suggestions.sort((a, b) => both(b) - both(a));
+  view.innerHTML = `
+    <nav class="crumbs"><a href="#/people">女優</a></nav>
+    <h1 class="page-title">別名の候補</h1>
+    <p class="hint">情報源が 1 か所だけの組です（2 か所以上で一致した組は自動でまとめています）。「同じ女優」にすると 1 人にまとまり、作品数が多い名義が代表名になります。</p>
+    <label class="alias-toggle"><input type="checkbox" id="show-all"> 作品のない名義との組も表示（${d.suggestions.filter((s) => !both(s)).length} 組）</label>
+    ${d.suggestions.length ? `<ul class="alias-list">${d.suggestions.map(row).join('')}</ul>` : '<div class="empty">確認待ちの候補はありません</div>'}`;
+  const applyFilter = () => {
+    const all = $('#show-all', view).checked;
+    view.querySelectorAll('.alias-row').forEach((li) => { li.hidden = !all && !both(d.suggestions[Number(li.dataset.i)]); });
+  };
+  $('#show-all', view).addEventListener('change', applyFilter);
+  applyFilter();
+  view.querySelectorAll('.alias-row').forEach((li) => {
+    const s = d.suggestions[Number(li.dataset.i)];
+    li.addEventListener('click', async (e) => {
+      const act = e.target.closest('[data-act]')?.dataset.act;
+      if (!act) return;
+      li.querySelectorAll('button').forEach((b) => { b.disabled = true; });
+      try {
+        await api('/api/people/suggestions', { method: 'POST', body: { names: s.names, accept: act === 'accept' } });
+        li.remove();
+        toast(act === 'accept' ? `${s.names.join(' と ')} をまとめました` : '候補から外しました');
+      } catch (err) {
+        toast(err.message);
+        li.querySelectorAll('button').forEach((b) => { b.disabled = false; });
+      }
+    });
   });
 }
 

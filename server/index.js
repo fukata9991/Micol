@@ -4,7 +4,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
 import { execFile, execFileSync } from 'node:child_process';
-import { JsonStore, HttpError, ROOT, naturalCompare } from './store.js';
+import { JsonStore, HttpError, ROOT, DATA_DIR, naturalCompare } from './store.js';
 import { Library } from './library.js';
 import { nfoFields, normalizeDate } from './nfo.js';
 import { Media } from './media.js';
@@ -51,10 +51,81 @@ const userProgress = (user) => (progress.data.users[user.id] ??= {});
 const auth = new Auth();
 // 女優の情報（生年月日）: { [名前]: { birthdate: 'YYYY-MM-DD' } }
 const people = new JsonStore('people.json', {}, { pretty: true });
-// 画面で設定した値（people.json）を優先し、なければ NFO の <actor><birthdate> を使う
-const birthdateOf = (name, person) => people.data[name]?.birthdate || (person ?? library.people().get(name))?.birthdate || null;
 const library = new Library(config);
 const media = new Media(config, library);
+
+// ---------- 女優の名義（別名）のグループ ----------
+// groups: 同じ女優の名義の組（[['御前珠里', '三崎あかり'], ...]）
+// rejected: 別名の候補のうち「違う」とした組（'名前A\t名前B'）
+// importedAt: 別名の候補ファイル（tools/fetch-actors.js --aliases が作る）を取り込んだ時刻
+const aliases = new JsonStore('aliases.json', { groups: [], rejected: [], importedAt: 0 }, { pretty: true });
+const SUGGESTED_FILE = path.join(DATA_DIR, 'people-aliases-suggested.json');
+const pairKey = (a, b) => [a, b].sort().join('\t');
+
+/** 重なっているグループをまとめて保存する */
+function setAliasGroups(groups) {
+  const merged = [];
+  for (const g of groups) {
+    const names = new Set(g.map((n) => String(n).trim()).filter(Boolean));
+    for (let i = merged.length - 1; i >= 0; i--) {
+      if ([...merged[i]].some((n) => names.has(n))) {
+        for (const n of merged[i]) names.add(n);
+        merged.splice(i, 1);
+      }
+    }
+    merged.push(names);
+  }
+  aliases.data.groups = merged.filter((s) => s.size > 1).map((s) => [...s]);
+  library.aliasGroups = aliases.data.groups;
+  aliases.save();
+}
+
+const groupOf = (name) => aliases.data.groups.find((g) => g.includes(name)) || [name];
+const sameGroup = (a, b) => groupOf(a).includes(b);
+
+/** 別名の候補ファイルを読む: { pairs: [{ names: [a, b], sources: [...] }] } */
+function readSuggestions() {
+  try {
+    return JSON.parse(fs.readFileSync(SUGGESTED_FILE, 'utf8')).pairs || [];
+  } catch {
+    return [];
+  }
+}
+
+/** 候補ファイルが新しくなっていれば、2 か所以上の情報源で一致した組を自動で取り込む */
+function importSuggestions() {
+  let mtime = 0;
+  try {
+    mtime = fs.statSync(SUGGESTED_FILE).mtimeMs;
+  } catch {
+    return;
+  }
+  if (mtime <= aliases.data.importedAt) return;
+  const rejected = new Set(aliases.data.rejected);
+  const auto = readSuggestions().filter((p) => p.sources.length >= 2 && !rejected.has(pairKey(...p.names)));
+  aliases.data.importedAt = mtime;
+  setAliasGroups([...aliases.data.groups, ...auto.map((p) => p.names)]);
+  console.log(`別名の候補を取り込みました: ${auto.length} 組（2 か所以上の情報源で一致）`);
+}
+
+/** 確認待ちの候補: 1 か所だけの情報源で、まだ同じ女優になっておらず「違う」ともしていない組（ライブラリにいる名義を含むもの） */
+function pendingSuggestions() {
+  const rejected = new Set(aliases.data.rejected);
+  const map = library.people();
+  return readSuggestions().filter(
+    (p) => !rejected.has(pairKey(...p.names)) && !sameGroup(...p.names) && p.names.some((n) => map.aliasIndex.has(n)),
+  );
+}
+
+library.aliasGroups = aliases.data.groups;
+importSuggestions();
+
+// 画面で設定した値（people.json）を優先し、なければ NFO の <actor><birthdate> を使う。別名義の値も使う
+function birthdateOf(name, person) {
+  const p = person ?? library.personOf(name);
+  for (const n of p?.names || [name]) if (people.data[n]?.birthdate) return people.data[n].birthdate;
+  return p?.birthdate || null;
+}
 
 // ---------- DTO ----------
 
@@ -261,7 +332,7 @@ route('GET', '/api/items/:id', async ({ params, prog }) => {
     nfo: it.nfo || null,
     nfoPath: it.nfoPath || null,
     // 出演者と生年月日（当時の年齢の表示用）
-    cast: (it.nfo?.actors || []).map((name) => ({ name, birthdate: people.data[name]?.birthdate || it.nfo.actorBirthdates?.[name] || birthdateOf(name) })),
+    cast: (it.nfo?.actors || []).map((name) => ({ name, birthdate: birthdateOf(name) || it.nfo.actorBirthdates?.[name] || null })),
     customThumb: !!it.sideImage,
     video: probe?.video || null,
     audio: probe?.audio || [],
@@ -391,17 +462,28 @@ route('GET', '/api/search', ({ query, prog }) => {
 
 // ---------- 女優（NFO の出演者） ----------
 
-const personDto = (p) => ({ name: p.name, count: p.items.length, thumb: !!p.thumb, birthdate: birthdateOf(p.name, p) });
+const personDto = (p) => ({
+  name: p.name,
+  aliases: p.names.filter((n) => n !== p.name),
+  count: p.items.length,
+  thumb: !!p.thumb,
+  birthdate: birthdateOf(p.name, p),
+});
 
 function getPerson(name) {
-  const p = library.people().get(name || '');
+  const p = library.personOf(name || '');
   if (!p) throw new HttpError(404, '見つかりません');
   return p;
 }
 
-route('GET', '/api/people', () => ({
-  people: [...library.people().values()].map(personDto),
-}));
+route('GET', '/api/people', ({ user }) => {
+  importSuggestions();
+  return {
+    people: [...library.people().values()].map(personDto),
+    // 案内するのは、どちらの名義にも作品がある（まとめると 2 人が 1 人になる）組の数
+    suggestions: user?.admin ? pendingSuggestions().filter((s) => s.names.every((n) => library.people().aliasIndex.has(n))).length : 0,
+  };
+});
 
 // 出演作品（発売日の新しい順、なければ名前順）。名前に / などを含められるよう ?name= で渡す
 route('GET', '/api/person', ({ query, prog }) => {
@@ -409,8 +491,57 @@ route('GET', '/api/person', ({ query, prog }) => {
   const items = p.items
     .map((id) => library.items.get(id))
     .sort((a, b) => (b.nfo?.premiered || '').localeCompare(a.nfo?.premiered || '') || naturalCompare(a.name, b.name));
-  return { ...personDto(p), items: items.map((it) => itemDto(it, prog)) };
+  // 作品ごとの名義（代表名と違う場合だけ）
+  return { ...personDto(p), items: items.map((it) => ({ ...itemDto(it, prog), credited: p.credits[it.id] !== p.name ? p.credits[it.id] : null })) };
 });
+
+// 別名の設定: { aliases: [...] } をこの女優の名義の組にする（入っていない名義は別の女優に戻る）
+route('PUT', '/api/person/aliases', ({ query, body }) => {
+  const p = getPerson(query.get('name'));
+  const list = [...new Set((Array.isArray(body.aliases) ? body.aliases : []).map((n) => String(n).trim()).filter((n) => n && n !== p.name))];
+  const old = groupOf(p.name);
+  setAliasGroups([...aliases.data.groups.filter((g) => g !== old), [p.name, ...list]]);
+  // 外した名義は「違う」として、候補から再び取り込まれないようにする
+  const removed = old.filter((n) => n !== p.name && !list.includes(n));
+  aliases.data.rejected = [...new Set([...aliases.data.rejected, ...removed.map((n) => pairKey(p.name, n))])];
+  aliases.save();
+  return personDto(library.personOf(p.name));
+}, 'admin');
+
+// 2 人を同じ女優にまとめる: { name: 統合する相手 }
+route('POST', '/api/person/merge', ({ query, body }) => {
+  const p = getPerson(query.get('name'));
+  const other = getPerson(String(body.name || ''));
+  if (p.name === other.name) throw new HttpError(400, '同じ女優です');
+  setAliasGroups([...aliases.data.groups, [...p.names, ...other.names]]);
+  return personDto(library.personOf(p.name));
+}, 'admin');
+
+// 確認待ちの別名の候補
+route('GET', '/api/people/suggestions', () => {
+  const map = library.people();
+  return {
+    suggestions: pendingSuggestions().map((s) => ({
+      ...s,
+      people: s.names.map((n) => {
+        const p = map.get(map.aliasIndex.get(n));
+        return p ? { name: n, person: p.name, count: p.items.length } : { name: n, person: null, count: 0 };
+      }),
+    })),
+  };
+}, 'admin');
+
+// 候補の採否: { names: [a, b], accept: true / false }
+route('POST', '/api/people/suggestions', ({ body }) => {
+  const names = (Array.isArray(body.names) ? body.names : []).map(String);
+  if (names.length !== 2) throw new HttpError(400, '名前を 2 つ指定してください');
+  if (body.accept) setAliasGroups([...aliases.data.groups, [...groupOf(names[0]), ...groupOf(names[1])]]);
+  else {
+    aliases.data.rejected = [...new Set([...aliases.data.rejected, pairKey(...names)])];
+    aliases.save();
+  }
+  return { ok: true };
+}, 'admin');
 
 // 生年月日の設定（空なら削除）。2024 / 2024-01 / 2024-01-31 の形式
 route('PUT', '/api/person', ({ query, body }) => {
@@ -425,9 +556,13 @@ route('PUT', '/api/person', ({ query, body }) => {
       throw new HttpError(400, `生年月日は 1995-04-12 の形式で、正しい日付を入力してください: ${v}`);
     }
     people.data[p.name] = { ...people.data[p.name], birthdate: v };
-  } else if (people.data[p.name]) {
-    delete people.data[p.name].birthdate;
-    if (!Object.keys(people.data[p.name]).length) delete people.data[p.name];
+  } else {
+    // 削除は別名義で設定した値も消す
+    for (const n of p.names) {
+      if (!people.data[n]) continue;
+      delete people.data[n].birthdate;
+      if (!Object.keys(people.data[n]).length) delete people.data[n];
+    }
   }
   people.save();
   return personDto(p);
@@ -694,6 +829,7 @@ function shutdown() {
   try {
     progress.save(true);
     people.save(true);
+    aliases.save(true);
     library.index.save(true);
     auth.flush();
   } catch (e) {

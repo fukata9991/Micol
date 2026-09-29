@@ -37,6 +37,8 @@ export class Library {
     this.watchers = [];
     this.watchKey = '';
     this.rescanTimer = null;
+    // 同じ女優の名義のグループ（[['御前珠里', '三崎あかり'], ...]）。index.js が aliases.json から設定する
+    this.aliasGroups = [];
   }
 
   async scanAll() {
@@ -325,27 +327,64 @@ export class Library {
     for (const it of this.items.values()) if (match(it.name, it.file, it.nfo?.originalTitle) && items.length < limit) items.push(it);
     folders.sort((a, b) => naturalCompare(a.name, b.name));
     items.sort((a, b) => naturalCompare(a.name, b.name));
-    const people = [...this.people().values()].filter((p) => match(p.name)).slice(0, limit);
+    const people = [...this.people().values()].filter((p) => match(...p.names)).slice(0, limit);
     people.sort((a, b) => b.items.length - a.items.length || naturalCompare(a.name, b.name));
     return { folders, items, people };
   }
 
   /**
-   * 出演者（NFO の <actor>）の一覧: 名前 -> { name, items: [動画 id], thumb }。
-   * メタデータの編集でも変わるので、キャッシュせず毎回動画から集める
+   * 出演者（NFO の <actor>）の一覧: 代表名 -> { name, names: [代表名, 別名...], items: [動画 id], credits: { 動画 id: その作品の名義 }, thumb, birthdate }。
+   * 別名のグループ（aliasGroups）にある名義は 1 人にまとめ、作品数がいちばん多い名義を代表名にする。
+   * メタデータの編集でも変わるので、キャッシュせず毎回動画から集める。
+   * 戻り値の aliasIndex（名義 -> 代表名）で、別名からも引ける
    */
   people() {
-    const map = new Map();
+    const byName = new Map();
     for (const it of this.items.values()) {
       for (const name of it.nfo?.actors || []) {
-        let p = map.get(name);
-        if (!p) map.set(name, (p = { name, items: [], thumb: null, birthdate: null }));
+        let p = byName.get(name);
+        if (!p) byName.set(name, (p = { name, items: [], thumb: null, birthdate: null }));
         p.items.push(it.id);
         p.thumb ||= it.nfo.actorThumbs?.[name] || null;
         p.birthdate ||= it.nfo.actorBirthdates?.[name] || null;
       }
     }
+    const map = new Map();
+    const aliasIndex = new Map();
+    const grouped = new Set();
+    for (const group of this.aliasGroups) {
+      const present = group.filter((n) => byName.has(n));
+      if (!present.length) continue;
+      present.sort((a, b) => byName.get(b).items.length - byName.get(a).items.length || naturalCompare(a, b));
+      const name = present[0];
+      const p = { name, names: [name, ...group.filter((n) => n !== name)], items: [], credits: {}, thumb: null, birthdate: null };
+      for (const n of present) {
+        const q = byName.get(n);
+        for (const id of q.items) {
+          if (p.credits[id]) continue;
+          p.items.push(id);
+          p.credits[id] = n;
+        }
+        p.thumb ||= q.thumb;
+        p.birthdate ||= q.birthdate;
+        grouped.add(n);
+      }
+      map.set(name, p);
+      for (const n of group) aliasIndex.set(n, name);
+    }
+    for (const [n, q] of byName) {
+      if (grouped.has(n)) continue;
+      map.set(n, { ...q, names: [n], credits: Object.fromEntries(q.items.map((id) => [id, n])) });
+      aliasIndex.set(n, n);
+    }
+    map.aliasIndex = aliasIndex;
     return map;
+  }
+
+  /** 名義（別名も可）からその女優を返す（出演作が無ければ undefined） */
+  personOf(name) {
+    const map = this.people();
+    return map.get(map.aliasIndex.get(name) ?? name);
   }
 }
 

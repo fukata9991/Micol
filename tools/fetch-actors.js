@@ -5,6 +5,7 @@
 //   node tools/fetch-actors.js --births                … 一覧の ○ の行で生年月日が空の出演者を、女優名で検索して埋める
 //   node tools/fetch-actors.js --titles                … 一覧の出演者が空の行を、av-wiki.net を品番・タイトルで検索して埋める
 //   node tools/fetch-actors.js --romaji                … ファイル名がローマ字の女優名だけの行（TFF-109 Rena Matsumoto 1 など）を日本語名で埋める
+//   node tools/fetch-actors.js --aliases               … 同じ女優の別名の候補を data/people-aliases-suggested.json に書き出す（Micol が取り込む）
 //   node tools/fetch-actors.js --tff                   … TFF（Tokyo Face Fuck）の行を tokyo-face-fuck.com の出演女優リストで埋める
 //   node tools/fetch-actors.js --test MILK-163         … 1 作品だけ検索して結果を表示する（確認用）
 //   --no-web を付けるとネットには接続せず、ファイル名からだけ取得する
@@ -428,7 +429,7 @@ async function avwiki(url) {
 function strip(html) {
   return String(html)
     .replace(/<[^>]+>/g, '')
-    .replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"').replace(/&#0?39;/g, "'").replace(/&#8211;/g, '–').replace(/&nbsp;/g, ' ')
+    .replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"').replace(/&#0?39;/g, "'").replace(/&#8211;/g, '–').replace(/&nbsp;/g, ' ').replace(/&#(\d+);/g, (_, d) => String.fromCodePoint(Number(d)))
     .replace(/\s+/g, ' ')
     .trim();
 }
@@ -631,7 +632,10 @@ function avwikiProfile(html) {
     const val = strip(m[2]);
     if (key === 'AV女優名' && !out.name) out.name = val.replace(/[（(].*$/, '').trim();
     if (key === '別名義' && !out.aliases.length) {
-      out.aliases = val.split(/[、,，/／・\s]+|[（）()]/).map((s) => s.trim()).filter((s) => s && !/^[–-]+$/.test(s));
+      out.aliases = val
+        .split(/[、,，/／]/)
+        .map((s) => s.replace(/[（(][^（）()]*[）)]/g, '').replace(/\s*[–-]\s*[a-z][a-z -]*$/i, '').trim())
+        .filter((s) => s && !/^([–—―\-\s]|&#\d+;)+$/.test(s) && s !== 'など');
     }
     if (key === '生年月日' && !out.birth) out.birth = normalizeDate(val) || '';
   }
@@ -931,6 +935,78 @@ TFF の行を埋めました: ${filled} 行（○）${missing.size ? `\n作品�
 一覧: ${REVIEW}（生年月日が - の出演者は --births で探せます）`);
 }
 
+// ---------- 別名の候補（--aliases） ----------
+//
+// 取得済みのデータ（キャッシュ）から「同じ女優の名義」の組を集め、どの情報源が一致しているかを書き出す。
+// Micol はこのファイルを読み、2 か所以上の情報源で一致した組を自動で同じ女優にまとめる（残りは画面で確認）
+//   r18.dev: "希咲エマ（HARUKI、加藤はる希）"  av-wiki: 別名義  tokyo-face-fuck.com: 別名  Wikipedia: {{AV女優}} の 別名
+
+async function suggestAliases() {
+  const pairs = new Map(); // 'a\tb' -> { names: [a, b], sources: Set }
+  const addGroup = (names, source) => {
+    const list = [...new Set(names.map((n) => String(n || '').trim()).filter((n) => n.length >= 2 && !/^([–—―\-\s]|&#\d+;)+$/.test(n)))];
+    for (let i = 0; i < list.length; i++) {
+      for (let j = i + 1; j < list.length; j++) {
+        const names = [list[i], list[j]].sort();
+        const key = names.join('\t');
+        if (!pairs.has(key)) pairs.set(key, { names, sources: new Set() });
+        pairs.get(key).sources.add(source);
+      }
+    }
+  };
+
+  // r18.dev
+  if (fs.existsSync(R18_CACHE)) {
+    for (const f of fs.readdirSync(R18_CACHE)) {
+      if (!f.startsWith('combined=')) continue;
+      for (const a of readJson(path.join(R18_CACHE, f))?.actresses || []) {
+        const m = /^(.+?)\s*[（(]([^（）()]+)[）)]\s*$/.exec(String(a.name_kanji || ''));
+        if (m) addGroup([m[1], ...m[2].split(/[、,，]/)], 'r18.dev');
+      }
+    }
+  }
+  // av-wiki
+  if (fs.existsSync(AVWIKI_CACHE)) {
+    for (const p of avwikiKnownProfiles()) if (p.aliases.length) addGroup([p.name, ...p.aliases], 'av-wiki');
+  }
+  // tokyo-face-fuck.com
+  for (const [name, list] of Object.entries(readJson(path.join(CACHE_DIR, 'tff', 'aliases.json')) || {})) addGroup([name, ...list], 'tokyo-face-fuck.com');
+  // Wikipedia（AV 女優の記事の 別名 欄）
+  if (fs.existsSync(WIKI_CACHE)) {
+    for (const f of fs.readdirSync(WIKI_CACHE)) {
+      const page = readJson(path.join(WIKI_CACHE, f))?.query?.pages?.[0];
+      const text = page?.revisions?.[0]?.slots?.main?.content || '';
+      const infobox = /\{\{\s*AV女優[\s\S]*?\n\}\}/.exec(text)?.[0];
+      if (!infobox || /\{\{\s*(Aimai|曖昧さ回避)/i.test(text)) continue;
+      const name = (/\|\s*名前\s*=\s*([^\n|]*)/.exec(infobox)?.[1] || page.title).replace(/\s+/g, '').replace(/[（(].*$/, '');
+      const alias = /\|\s*別名\s*=\s*([^\n]*)/.exec(infobox)?.[1] || '';
+      const list = alias
+        .replace(/<ref[\s\S]*?(<\/ref>|\/>)/g, '')
+        .replace(/\[\[(?:[^|\]]*\|)?([^\]]*)\]\]/g, '$1')
+        .replace(/<br\s*\/?>/g, '、')
+        .split(/[、,，/／]/)
+        .map((s) => s.replace(/[（(][^（）()]*[）)]/g, '').replace(/\s+/g, '').trim())
+        .filter((s) => s && !/[={}<>]/.test(s));
+      if (name && list.length) addGroup([name, ...list], 'Wikipedia');
+    }
+  }
+
+  // ライブラリの出演者（どちらかの名義がライブラリにある組だけ残す）
+  const videos = [];
+  for (const r of roots) walk(r, videos);
+  const library = new Set();
+  for (const v of videos) for (const a of (await readNfo(v.nfoPath, v.dir))?.actors || []) library.add(a);
+  const out = [...pairs.values()]
+    .filter((p) => p.names.some((n) => library.has(n)))
+    .map((p) => ({ names: p.names, sources: [...p.sources].sort() }))
+    .sort((a, b) => b.sources.length - a.sources.length || a.names[0].localeCompare(b.names[0], 'ja'));
+  const file = path.join(DATA_DIR, 'people-aliases-suggested.json');
+  fs.writeFileSync(file, JSON.stringify({ created: Date.now(), pairs: out }, null, 1));
+  console.log(`別名の候補: ${out.length} 組（2 か所以上で一致 ${out.filter((p) => p.sources.length >= 2).length} 組・自動で取り込み）
+${file}
+Micol の女優一覧を開くと取り込まれます（1 か所だけのものは「別名の候補」で確認できます）`);
+}
+
 // ---------- 書き込み ----------
 
 async function applyReview() {
@@ -1082,5 +1158,6 @@ else if (args.includes('--births')) await fillBirthdates();
 else if (args.includes('--titles')) await fillFromTitles();
 else if (args.includes('--romaji')) await fillFromRomaji();
 else if (args.includes('--tff')) await fillFromTff();
+else if (args.includes('--aliases')) await suggestAliases();
 else if (apply) await applyReview();
 else await fetchAll();
