@@ -1184,7 +1184,10 @@ async function fixActorThumbs() {
   const videos = [];
   for (const r of roots) walk(r, videos);
   const nfos = new Map(); // 同じ NFO（movie.nfo など）を 2 回処理しない
-  for (const v of videos) if (fs.existsSync(v.nfoPath)) nfos.set(v.nfoPath, v.dir);
+  for (const v of videos) {
+    // 動画の NFO と、同じフォルダの movie.nfo（.nfo の中・動画の隣）
+    for (const f of [v.nfoPath, path.join(v.dir, SIDE_DIRS.nfo, 'movie.nfo'), path.join(v.dir, 'movie.nfo')]) if (fs.existsSync(f)) nfos.set(f, v.dir);
+  }
   let files = 0;
   let thumbs = 0;
   const left = new Set(); // .actors に画像が無く、書き換えられなかった名義
