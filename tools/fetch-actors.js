@@ -4,6 +4,7 @@
 //   node tools/fetch-actors.js --apply                 … 一覧の「適用」が ○ の行を NFO に書き込む
 //   node tools/fetch-actors.js --births                … 一覧の ○ の行で生年月日が空の出演者を、女優名で検索して埋める
 //   node tools/fetch-actors.js --titles                … 一覧の出演者が空の行を、av-wiki.net を品番・タイトルで検索して埋める
+//   node tools/fetch-actors.js --romaji                … ファイル名がローマ字の女優名だけの行（TFF-109 Rena Matsumoto 1 など）を日本語名で埋める
 //   node tools/fetch-actors.js --test MILK-163         … 1 作品だけ検索して結果を表示する（確認用）
 //   --no-web を付けるとネットには接続せず、ファイル名からだけ取得する
 //
@@ -778,6 +779,69 @@ async function minnanoGet(rel) {
   return html;
 }
 
+// ---------- ローマ字名から日本語名を探す（--romaji） ----------
+//
+// "TFF-109 Rena Matsumoto 1" のように、ファイル名にローマ字の女優名だけがある作品用。
+// av-wiki.net の女優ページのアドレス（/av-actress/姓-名/）が名前のローマ字なので、
+// 「名 姓」「姓 名」の両方で開き、見つかれば日本語名と生年月日を入れる（○）。
+// 見つからなければローマ字名のまま入れる（? 要確認）
+
+async function fillFromRomaji() {
+  if (!fs.existsSync(REVIEW)) return fail(`一覧がありません: ${REVIEW}`);
+  fs.mkdirSync(AVWIKI_CACHE, { recursive: true });
+  const rows = readCsv(REVIEW);
+  const cache = new Map();
+  let found = 0;
+  let romaji = 0;
+  for (const r of rows) {
+    if (split(r.出演者).length || !r.ファイル) continue;
+    const base = path.basename(r.ファイル, path.extname(r.ファイル));
+    // 品番のあとがローマ字の 2 語（+ パート番号）だけのもの
+    const m = /^[A-Za-z]{2,7}[-_ ]?\d{2,6}[A-Za-z]?\s+([A-Z][a-z]+)\s+([A-Z][a-z]+)(?:\s+\d+)?$/.exec(base);
+    if (!m) continue;
+    const [given, family] = [m[1], m[2]];
+    const key = `${given} ${family}`;
+    if (!cache.has(key)) {
+      let p = null;
+      for (const slug of [`${family}-${given}`, `${given}-${family}`].map((s) => s.toLowerCase())) {
+        try {
+          const html = await avwiki(`https://av-wiki.net/av-actress/${slug}/`);
+          const prof = html && avwikiProfile(html);
+          if (prof?.name) {
+            p = prof;
+            break;
+          }
+        } catch (e) {
+          console.warn(`av-wiki の検索に失敗: ${key} (${e.message})`);
+        }
+      }
+      cache.set(key, p);
+    }
+    const p = cache.get(key);
+    if (p) {
+      r.出演者 = p.name;
+      r.生年月日 = p.birth || '-';
+      r.取得元 = 'av-wiki(ローマ字名)';
+      r.適用 = '○';
+      r.備考 = [r.備考, `${key} → ${p.name}`].filter(Boolean).join(' / ');
+      found++;
+    } else {
+      r.出演者 = key;
+      r.生年月日 = '-';
+      r.取得元 = 'ファイル名(ローマ字)';
+      r.適用 = '?';
+      romaji++;
+    }
+  }
+  writeCsv(REVIEW, rows);
+  const names = [...cache.values()];
+  console.log(`
+ローマ字名の女優: ${cache.size} 人（日本語名が見つかった ${names.filter(Boolean).length} 人）
+  日本語名で埋めた行: ${found} 行（○）
+  ローマ字名のまま入れた行: ${romaji} 行（? 要確認）
+一覧: ${REVIEW}`);
+}
+
 // ---------- 書き込み ----------
 
 async function applyReview() {
@@ -919,5 +983,6 @@ const testIdx = args.indexOf('--test');
 if (testIdx >= 0) await testOne(args[testIdx + 1] || '');
 else if (args.includes('--births')) await fillBirthdates();
 else if (args.includes('--titles')) await fillFromTitles();
+else if (args.includes('--romaji')) await fillFromRomaji();
 else if (apply) await applyReview();
 else await fetchAll();
