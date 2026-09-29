@@ -10,6 +10,7 @@
 //   node tools/fetch-actors.js --fix-thumbs            … NFO の出演者の画像のパス（Jellyfin のフォルダなど）を .actors の画像に書き換える
 //   node tools/fetch-actors.js --tff                   … TFF（Tokyo Face Fuck）の行を tokyo-face-fuck.com の出演女優リストで埋める
 //   node tools/fetch-actors.js --javtube               … TFF でローマ字名のままの行を javtube.com の女優ページで日本語名にする
+//   node tools/fetch-actors.js --spermmania            … Spermmania（001-Yui Kawagoe.mp4）の行を 1pondo.com の作品ページで日本語名にする
 //   node tools/fetch-actors.js --test MILK-163         … 1 作品だけ検索して結果を表示する（確認用）
 //   --no-web を付けるとネットには接続せず、ファイル名からだけ取得する
 //
@@ -638,6 +639,7 @@ function r18Aliases() {
 /** 保存済みの av-wiki の女優ページのプロフィール一覧 */
 function avwikiKnownProfiles() {
   const list = [];
+  if (!fs.existsSync(AVWIKI_CACHE)) return list;
   for (const f of fs.readdirSync(AVWIKI_CACHE)) {
     if (!f.startsWith('av-actress_')) continue;
     const p = avwikiProfile(fs.readFileSync(path.join(AVWIKI_CACHE, f), 'utf8'));
@@ -1506,6 +1508,76 @@ async function fillFromJavtube() {
 ${notFound.size ? `JavTube に見つからなかった: ${[...notFound].join('、')}\n` : ''}一覧: ${REVIEW}（生年月日は --births で探せます）`);
 }
 
+// ---------- Spermmania（1pondo.com のアフィリエイトページ、--spermmania） ----------
+//
+// ファイル名 "001-Yui Kawagoe.mp4" / "332-Aya Komatsu & Nagi Tsukino.mp4" の作品番号と女優ごとに
+// https://1pondo.com/jp/heydouga/spermmania/yui-kawagoe/001_kawagoeyui/ を開き、
+// タイトル「Yui Kawagoe 川越ゆい Spermmania 001_kawagoeyui」から日本語名を読む（作品番号まで一致するので ○）。
+// ページが無い女優はローマ字名のまま（?）
+
+const SPERMMANIA_CACHE = path.join(CACHE_DIR, 'spermmania');
+
+async function spermmaniaName(num, given, family) {
+  const slug = `${given}-${family}`.toLowerCase();
+  const id = `${num}_${family}${given}`.toLowerCase();
+  fs.mkdirSync(SPERMMANIA_CACHE, { recursive: true });
+  const cacheFile = path.join(SPERMMANIA_CACHE, `${id}.html`);
+  let html;
+  if (fs.existsSync(cacheFile)) html = fs.readFileSync(cacheFile, 'utf8');
+  else {
+    await sleep(2000); // 負担をかけないよう 2 秒に 1 回まで
+    const r = await politeFetch(`https://1pondo.com/jp/heydouga/spermmania/${slug}/${id}/`, { headers: { 'User-Agent': UA }, redirect: 'manual' });
+    html = r.status === 200 ? await r.text() : r.status === 404 || (r.status >= 300 && r.status < 400) ? '' : null;
+    if (html === null) throw new Error(`HTTP ${r.status}`);
+    fs.writeFileSync(cacheFile, html);
+  }
+  const title = strip(/<title>([\s\S]*?)<\/title>/.exec(html || '')?.[1] || '');
+  const m = new RegExp(`${given}\\s+${family}\\s+(.+?)\\s+Spermmania\\s+${num}_`, 'i').exec(title);
+  const name = m?.[1]?.trim();
+  return name && /[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}]/u.test(name) ? name : null;
+}
+
+async function fillFromSpermmania() {
+  if (!fs.existsSync(REVIEW)) return fail(`一覧がありません: ${REVIEW}`);
+  const rows = readCsv(REVIEW);
+  const profiles = avwikiKnownProfiles();
+  let sure = 0;
+  let partial = 0;
+  for (const r of rows) {
+    if (!r.ファイル || !/[\\/]spermmania[\\/]/i.test(r.ファイル)) continue;
+    if (split(r.出演者).length && !/^(ファイル名\(ローマ字\)|Spermmania)/.test(r.取得元)) continue;
+    const base = path.basename(r.ファイル, path.extname(r.ファイル));
+    const m = /^(\d{3})\s*[-_ ]\s*(.+)$/.exec(base);
+    if (!m) continue;
+    const people = m[2].split(/\s*(?:&|＆|,|、| and )\s*/i).map((s) => /^([A-Z][a-z]+)\s+([A-Z][a-z]+)$/.exec(s.trim())).filter(Boolean);
+    if (!people.length) continue;
+    const names = [];
+    let found = 0;
+    for (const [, given, family] of people) {
+      let name = null;
+      try {
+        name = await spermmaniaName(m[1], given, family);
+      } catch (e) {
+        console.warn(`1pondo.com の取得に失敗: ${m[1]} ${given} ${family} (${e.message})`);
+      }
+      if (name) found++;
+      names.push(name || `${given} ${family}`);
+    }
+    r.出演者 = names.join('／');
+    r.生年月日 = names.map((n) => profiles.find((x) => x.birth && (x.name === n || x.aliases.includes(n)))?.birth || '-').join('／');
+    r.取得元 = found === people.length ? 'Spermmania(作品番号)' : found ? 'Spermmania(一部ローマ字)' : 'ファイル名(ローマ字)';
+    r.適用 = found === people.length ? '○' : '?';
+    r.備考 = [r.備考, people.map(([, g, f], i) => `${g} ${f} → ${names[i]}`).join('、')].filter(Boolean).join(' / ');
+    if (found === people.length) sure++;
+    else partial++;
+    if ((sure + partial) % 50 === 0) console.log(`  ${sure + partial} 本`);
+  }
+  writeCsv(REVIEW, rows);
+  console.log(`
+Spermmania: 日本語名にした ${sure} 行（○）、ローマ字名が残った ${partial} 行（?）
+一覧: ${REVIEW}（生年月日は --births で探せます）`);
+}
+
 // ---------- 書き込み ----------
 
 async function applyReview() {
@@ -1658,6 +1730,7 @@ else if (args.includes('--titles')) await fillFromTitles();
 else if (args.includes('--romaji')) await fillFromRomaji();
 else if (args.includes('--tff')) await fillFromTff();
 else if (args.includes('--javtube')) await fillFromJavtube();
+else if (args.includes('--spermmania')) await fillFromSpermmania();
 else if (args.includes('--aliases')) await suggestAliases();
 else if (args.includes('--photos')) await fetchPhotos();
 else if (args.includes('--fix-thumbs')) await fixActorThumbs();
