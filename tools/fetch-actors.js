@@ -934,6 +934,8 @@ TFF の行を埋めました: ${filled} 行（○）${missing.size ? `\n作品�
 // ---------- 書き込み ----------
 
 async function applyReview() {
+  // 書き換える前の NFO を data/backup/nfo-日時/ に元のフォルダ構成で残す
+  const backupDir = path.join(DATA_DIR, 'backup', `nfo-${new Date().toISOString().replace(/[:.]/g, '-')}`);
   if (!fs.existsSync(REVIEW)) return fail(`一覧がありません。先に node tools/fetch-actors.js を実行してください: ${REVIEW}`);
   const rows = readCsv(REVIEW);
   let written = 0;
@@ -971,6 +973,11 @@ async function applyReview() {
     }
     if (!Object.keys(fields).length) continue;
     try {
+      if (fs.existsSync(nfoPath)) {
+        const dst = path.join(backupDir, nfoPath.replace(/^([A-Za-z]):/, '$1'));
+        fs.mkdirSync(path.dirname(dst), { recursive: true });
+        fs.copyFileSync(nfoPath, dst);
+      }
       await writeNfo(nfoPath, fields);
       written++;
     } catch (e) {
@@ -979,6 +986,7 @@ async function applyReview() {
     }
   }
   console.log(`NFO に書き込みました: ${written} 件${skipped ? `（書き込めなかったもの ${skipped} 件）` : ''}`);
+  if (written) console.log(`書き換える前の NFO: ${backupDir}`);
 }
 
 const split = (s) => String(s || '').split('／').map((x) => x.trim()).filter(Boolean);
