@@ -1038,6 +1038,7 @@ Micol の女優一覧を開くと取り込まれます（1 か所だけのもの
 //   1. その作品の NFO の <actor><thumb> にある画像（URL ならダウンロード、ローカルのファイルならコピー）
 //   2. 同じ女優（別名を含む）の他の作品の NFO にある画像
 //   3. FANZA の女優画像（r18.dev の image_url → https://pics.dmm.co.jp/mono/actjpgs/…）
+//   3'. このAV女優の名前教えてwiki の女優ページの画像
 //   4. みんなのAV の女優ページの写真（名前が一致する女優が 1 人だけの場合）
 // 既に .actors に画像がある名義は変更しない。NFO の <thumb> の記述もそのまま残す
 
@@ -1115,6 +1116,16 @@ async function fetchPhotos() {
       if (photo) break;
       const img = r18Images.get(n);
       if (img) photo = await downloadPhoto(`https://pics.dmm.co.jp/mono/actjpgs/${img}`, 'FANZA');
+    }
+    // このAV女優の名前教えてwiki の女優ページの画像（名前・別名のページ → 保存済みのページの別名）
+    for (const n of group) {
+      if (photo) break;
+      try {
+        const sp = (await seesaaProfile(n)) || seesaaKnownProfiles().find((x) => x.aliases.includes(n));
+        if (sp?.image) photo = await downloadPhoto(sp.image, 'このAV女優の名前教えてwiki');
+      } catch (e) {
+        console.warn(`このAV女優の名前教えてwiki の取得に失敗: ${n} (${e.message})`);
+      }
     }
     // 4. みんなのAV
     for (const n of group) {
@@ -1348,7 +1359,10 @@ function parseSeesaa(html, name) {
     .filter((s) => s && s.length <= 20 && !/^[–\-―\s]+$/.test(s));
   const text = kv['生年月日'] || '';  const b = /(\d{4})\s*年\s*(\d{1,2})\s*月\s*(\d{1,2})\s*日/.exec(text);
   const main = names[0] || name;
+  // プロフィールの画像（FANZA の女優画像や、メーカーのサイトの画像）
+  const image = /<img[^>]+src="(https?:\/\/[^"]+\.(?:jpe?g|png|webp))"/i.exec(area)?.[1]?.replace(/^http:\/\/pics\.dmm\.co\.jp\//, 'https://pics.dmm.co.jp/') || '';
   return {
+    image: /static\.seesaawiki|wiki\.seesaa|icon_|\/img\/usr/i.test(image) ? '' : image,
     name: main,
     aliases: [...new Set(names.filter((n) => n !== main))],
     birth: b ? normalizeDate(`${b[1]}-${b[2]}-${b[3]}`) || '' : '',
