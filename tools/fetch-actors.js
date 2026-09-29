@@ -3,6 +3,7 @@
 //   node tools/fetch-actors.js [フォルダ ...]          … 取得して確認用の一覧 data/actors-review.csv を作る（NFO は変更しない）
 //   node tools/fetch-actors.js --apply                 … 一覧の「適用」が ○ の行を NFO に書き込む
 //   node tools/fetch-actors.js --births                … 一覧の ○ の行で生年月日が空の出演者を、女優名で検索して埋める
+//   node tools/fetch-actors.js --titles                … 一覧の出演者が空の行を、av-wiki.net を品番・タイトルで検索して埋める
 //   node tools/fetch-actors.js --test MILK-163         … 1 作品だけ検索して結果を表示する（確認用）
 //   --no-web を付けるとネットには接続せず、ファイル名からだけ取得する
 //
@@ -254,9 +255,66 @@ function sameWork(v, found) {
 
 // ---------- av-wiki.net ----------
 
-/** 品番の作品ページ（https://av-wiki.net/mism-105/）から出演者・配信開始日を取る。無ければ null */
+/**
+ * 品番の作品ページから出演者・配信開始日を取る。無ければ null。
+ * https://av-wiki.net/mism-105/ が無い場合は品番で検索する（https://av-wiki.net/550ene-003/ のような番号付きのページ）
+ */
 async function findAvWiki(code) {
-  const html = await avwiki(`https://av-wiki.net/${encodeURIComponent(code.toLowerCase())}/`);
+  const direct = await avwiki(`https://av-wiki.net/${encodeURIComponent(code.toLowerCase())}/`);
+  if (direct) return parseAvWikiWork(direct, code);
+  const slug = code.toLowerCase();
+  for (const w of (await avwikiSearchWorks(code)).filter((w) => w.slug.replace(/^\d+/, '') === slug).slice(0, 3)) {
+    const found = await parseAvWikiWork(await avwiki(w.url), code);
+    if (found) return found;
+  }
+  return null;
+}
+
+/** ファイル名のタイトルで av-wiki.net を検索し、タイトルが十分に似ている作品を返す（品番が無い・品番で見つからない作品用） */
+async function findAvWikiByTitle(v) {
+  const q = titleQuery(v.base);
+  if (q.length < 6) return null;
+  for (const w of (await avwikiSearchWorks(q)).slice(0, 3)) {
+    const found = await parseAvWikiWork(await avwiki(w.url));
+    if (found && sameWork(v, found) && titleRatio(v.base, found.title) >= 0.6) return { ...found, url: w.url };
+  }
+  return null;
+}
+
+/** 検索に使うタイトル: 品番と【】「」などの括弧書きを除き、いちばん長い部分（30 文字まで） */
+function titleQuery(base) {
+  const t = base
+    .replace(/^[A-Za-z]{2,7}[-_ ]?\d{2,6}[A-Za-z]?\s*/, '')
+    .replace(/[【\[「『][^】\]」』]*[】\]」』]/g, ' ')
+    .replace(/[（(][^（）()]*[）)]/g, ' ');
+  const parts = t.split(/[\s　]+/).filter(Boolean).sort((a, b) => b.length - a.length);
+  return (parts[0] || '').slice(0, 30);
+}
+
+/** ファイル名のタイトル（品番を除く）の 2 文字ずつの並びのうち、found のタイトルに含まれる割合 */
+function titleRatio(base, title) {
+  const norm = (s) => String(s || '').normalize('NFKC').toLowerCase().replace(/[\s\p{P}\p{S}●○◯〇]/gu, '');
+  const a = norm(base.replace(/^[A-Za-z]{2,7}[-_ ]?\d{2,6}[A-Za-z]?/, ''));
+  const b = norm(title);
+  if (a.length < 4) return 0;
+  let hit = 0;
+  for (let i = 0; i < a.length - 1; i++) if (b.includes(a.slice(i, i + 2))) hit++;
+  return hit / (a.length - 1);
+}
+
+/** av-wiki.net の検索結果の作品ページ */
+async function avwikiSearchWorks(query) {
+  const html = await avwiki(`https://av-wiki.net/?s=${encodeURIComponent(query)}`);
+  const out = [];
+  for (const m of (html || '').matchAll(/<a[^>]*href="(https:\/\/av-wiki\.net\/([a-z0-9-]+)\/)"/g)) {
+    if (/^(av-actress|category|tag|page|author|wp-|feed)/.test(m[2]) || !/\d/.test(m[2])) continue;
+    if (!out.some((o) => o.url === m[1])) out.push({ url: m[1], slug: m[2] });
+  }
+  return out;
+}
+
+/** 作品ページの内容。code を指定した場合、メーカー品番が違えば null */
+async function parseAvWikiWork(html, code = null) {
   if (!html) return null;
   const dl = {};
   for (const m of html.matchAll(/<dt[^>]*>([\s\S]*?)<\/dt>\s*<dd[^>]*>([\s\S]*?)<\/dd>/g)) {
@@ -264,7 +322,8 @@ async function findAvWiki(code) {
     if (key && !(key in dl)) dl[key] = m[2];
   }
   // 別の品番のページに転送された場合などは使わない
-  if (dl['メーカー品番'] && strip(dl['メーカー品番']).toUpperCase() !== code) return null;
+  // 配信サイトの番号が付いた品番（550ENE-003）も同じとみなす
+  if (code && dl['メーカー品番'] && strip(dl['メーカー品番']).toUpperCase().replace(/^\d+/, '') !== code) return null;
   const title = strip(/<title>([\s\S]*?)<\/title>/.exec(html)?.[1] || '')
     .replace(/^[^：]*：/, '')
     .replace(/に出てるAV女優.*$/, '');
@@ -273,7 +332,62 @@ async function findAvWiki(code) {
     const name = strip(m[2]);
     if (name && !actresses.some((a) => a.name === name)) actresses.push({ name, birthdate: await avwikiBirth(m[1]) });
   }
-  return { title, date: normalizeDate(strip(dl['配信開始日'] || dl['発売日'] || '')) || '', actresses };
+  return { title, date: normalizeDate(strip(dl['配信開始日'] || dl['発売日'] || '')) || '', actresses, code: strip(dl['メーカー品番'] || '') };
+}
+
+// ---------- 出演者が空の行を av-wiki で埋める（--titles） ----------
+
+async function fillFromTitles() {
+  if (!fs.existsSync(REVIEW)) return fail(`一覧がありません: ${REVIEW}`);
+  fs.mkdirSync(AVWIKI_CACHE, { recursive: true });
+  const rows = readCsv(REVIEW);
+  const targets = rows.filter((r) => !split(r.出演者).length && r.ファイル && fs.existsSync(r.ファイル));
+  console.log(`出演者が空の行: ${targets.length} 行を av-wiki.net で検索します`);
+  let byCode = 0;
+  let byTitle = 0;
+  let done = 0;
+  for (const r of targets) {
+    const base = path.basename(r.ファイル, path.extname(r.ファイル));
+    const dir = path.dirname(r.ファイル);
+    if (MINOR.test(base)) continue;
+    const side = path.join(dir, SIDE_DIRS.nfo, `${base}.nfo`);
+    const v = { base, nfo: await readNfo(fs.existsSync(side) ? side : path.join(dir, `${base}.nfo`), dir) };
+    if (MINOR.test(v.nfo?.title || '')) continue;
+    const code = productCode(base);
+    let found = null;
+    let how = '';
+    try {
+      if (code) {
+        found = await findAvWiki(code);
+        if (found && !sameWork(v, found)) found = null;
+        if (found) how = 'av-wiki(品番)';
+      }
+      if (!found || !found.actresses.length) {
+        const t = await findAvWikiByTitle(v);
+        if (t?.actresses.length) {
+          found = t;
+          how = code && t.code.toUpperCase().replace(/^\d+/, '') === code ? 'av-wiki(品番)' : 'av-wiki(タイトル)';
+        }
+      }
+    } catch (e) {
+      console.warn(`av-wiki の検索に失敗: ${base} (${e.message})`);
+    }
+    if (++done % 50 === 0) console.log(`  ${done} / ${targets.length} 行を検索`);
+    if (!found?.actresses.length) continue;
+    r.出演者 = found.actresses.map((a) => a.name).join('／');
+    r.生年月日 = found.actresses.map((a) => a.birthdate || '-').join('／');
+    if (!r.発売日 && found.date && !r.現在の発売日) r.発売日 = found.date;
+    r.取得元 = how;
+    // 品番で確かめられたものは ○、タイトルだけで見つけたものは ?（確認が必要）
+    r.適用 = how === 'av-wiki(品番)' ? '○' : '?';
+    r.備考 = [r.備考, `av-wiki: ${found.title}`].filter(Boolean).join(' / ');
+    if (how === 'av-wiki(品番)') byCode++;
+    else byTitle++;
+  }
+  writeCsv(REVIEW, rows);
+  console.log(`
+出演者を埋めました: 品番で ${byCode} 行（○）、タイトルで ${byTitle} 行（? 要確認）
+一覧: ${REVIEW}`);
 }
 
 /** 女優ページの「生年月日」（1993年6月3日 → 1993-06-03）。無ければ '' */
@@ -794,5 +908,6 @@ function fail(msg) {
 const testIdx = args.indexOf('--test');
 if (testIdx >= 0) await testOne(args[testIdx + 1] || '');
 else if (args.includes('--births')) await fillBirthdates();
+else if (args.includes('--titles')) await fillFromTitles();
 else if (apply) await applyReview();
 else await fetchAll();

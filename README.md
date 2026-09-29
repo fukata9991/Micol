@@ -140,6 +140,8 @@ Kodi / Jellyfin 形式の NFO ファイルに対応しています（UTF-8 / Shi
    - `node tools\fetch-actors.js --births` で、`○` の行の生年月日が空の出演者を女優名で検索して埋めます
      （av-wiki.net の女優ページ → Wikipedia の AV 女優の記事 → みんなのAV の女優ページの順。別名でも探します。取得元は「備考」列）
      みんなのAV は初回だけ五十音の女優一覧を全部読むため 30 分ほどかかります（`data\cache\minnano` に保存して 30 日間再利用）
+   - `node tools\fetch-actors.js --titles` で、出演者が空の行を av-wiki.net の品番検索・タイトル検索で埋めます
+     （品番で確かめられたものは `○`、タイトルだけで見つけたものは `?`）
 3. `node tools\fetch-actors.js --apply` … `○` の行を NFO に書き込みます
 
 - 出演者が既に入っている NFO は出演者を変えず、生年月日だけを足します
