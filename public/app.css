@@ -322,12 +322,22 @@ body[data-size="s"] .play-overlay { width: 42px; height: 42px; font-size: 16px; 
 .size-toggle button:hover { color: var(--text); background: var(--surface-2); }
 .size-toggle button[aria-pressed="true"] { background: var(--accent); color: #fff; }
 .search { min-width: 0; }
+.search-open, .search-close { display: none; }
 @media (max-width: 640px) {
-  /* スマホ幅では検索欄を 2 段目に回して、右側のボタンがはみ出さないようにする */
-  .topbar { flex-wrap: wrap; row-gap: 8px; }
-  .search { order: 3; flex-basis: 100%; max-width: none; margin-left: 0; }
-  .size-toggle { margin-left: auto; }
+  /* スマホ幅ではヘッダーを 1 行に保つ。検索欄は虫眼鏡ボタンにしまい、開いたらヘッダー全体を検索欄にする */
+  .search { display: none; }
+  .search-open { display: grid; margin-left: auto; flex-shrink: 0; }
+  .topbar > * { flex-shrink: 0; }
+  .topbar.searching > :not(.search) { display: none; }
+  .topbar.searching .search { display: flex; align-items: center; gap: 4px; flex: 1; max-width: none; margin: 0; }
+  .topbar.searching .search-close { display: grid; flex-shrink: 0; margin-left: -6px; }
+  .topbar.searching .search input { flex: 1; min-width: 0; padding-top: 6px; padding-bottom: 6px; }
   .size-toggle button { padding: 6px 9px; }
+}
+@media (max-width: 360px) {
+  /* とても狭い画面ではロゴの文字を省き、ボタンが収まるようにする */
+  .topbar .logo-text { display: none; }
+  .topbar { gap: 6px; }
 }
 
 /* ---------- サイドバー ---------- */

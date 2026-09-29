@@ -319,6 +319,8 @@ async function router() {
   const view = $('#view');
   document.body.classList.toggle('playing', parts[0] === 'play');
   if (parts[0] !== 'search') $('#search-form').q.value = '';
+  // スマホ幅: 検索結果の画面では検索欄を開いたままにし、それ以外の画面に移ったら閉じる
+  $('.topbar').classList.toggle('searching', parts[0] === 'search');
   closeNav();
   setAccountMenu(false);
   markNav(parts[0] === 'folder' ? `#/folder/${parts[1]}` : `#/${parts[0] || ''}`);
@@ -344,6 +346,23 @@ window.addEventListener('hashchange', () => me && router());
 
 let searchTimer;
 const searchForm = $('#search-form');
+
+// スマホ幅では検索欄を虫眼鏡ボタンの中にしまい、押すとヘッダー全体が検索欄になる
+// 検索結果は履歴を置き換えて表示するので、閉じるときは開く前の画面に戻す
+let searchReturn = null;
+$('#search-open').addEventListener('click', () => {
+  if (!location.hash.startsWith('#/search')) searchReturn = location.hash || '#/';
+  $('.topbar').classList.add('searching');
+  searchForm.q.focus();
+});
+function closeSearch() {
+  $('.topbar').classList.remove('searching');
+  if (location.hash.startsWith('#/search')) location.replace(searchReturn || '#/');
+}
+$('#search-close').addEventListener('click', closeSearch);
+searchForm.q.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape') closeSearch();
+});
 searchForm.addEventListener('submit', (e) => {
   e.preventDefault();
   const q = searchForm.q.value.trim();
