@@ -2,6 +2,7 @@
 //
 //   node tools/fetch-actors.js [フォルダ ...]          … 取得して確認用の一覧 data/actors-review.csv を作る（NFO は変更しない）
 //   node tools/fetch-actors.js --apply                 … 一覧の「適用」が ○ の行を NFO に書き込む
+//   node tools/fetch-actors.js --births                … 一覧の ○ の行で生年月日が空の出演者を、女優名で検索して埋める
 //   node tools/fetch-actors.js --test MILK-163         … 1 作品だけ検索して結果を表示する（確認用）
 //   --no-web を付けるとネットには接続せず、ファイル名からだけ取得する
 //
@@ -9,6 +10,7 @@
 //   1. r18.dev（FANZA の作品情報を公開しているデータベース）: 出演者・発売日
 //   2. av-wiki.net（素人・企画作品の出演者のまとめサイト）: 1 で出演者が分からない作品の出演者、
 //      および出演者の生年月日（女優ページから）
+//   生年月日（--births）: av-wiki.net の女優ページ（女優名で検索）→ Wikipedia（AV 女優の記事のプロフィール欄）
 //   3. ファイル名: 1・2 で出演者が分からない作品は、ファイル名の末尾の名前（"… 青井いちご" "(一条みお)" など）を候補にする。
 //      既に他の作品に出演者として登録されている名前なら ○、そうでなければ ?（確認が必要）にする
 //   独自の品番が別の作品と同じ場合があるので、1・2 は見つかった作品のタイトルがファイル名と似ているものだけ使う
@@ -31,6 +33,7 @@ const web = !args.includes('--no-web');
 const REVIEW = path.join(DATA_DIR, 'actors-review.csv');
 const R18_CACHE = path.join(CACHE_DIR, 'r18');
 const AVWIKI_CACHE = path.join(CACHE_DIR, 'avwiki');
+const WIKI_CACHE = path.join(CACHE_DIR, 'wikipedia');
 const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) Micol/1.0 (personal media library)';
 const SKIP_DIRS = new Set(['$recycle.bin', 'system volume information', '@eadir', '.trash']);
 // 未成年を性的に扱うタイトル（対象外にする）
@@ -356,6 +359,133 @@ function clean(w) {
     .trim();
 }
 
+// ---------- 生年月日を女優名で探す（--births） ----------
+
+async function fillBirthdates() {
+  if (!fs.existsSync(REVIEW)) return fail(`一覧がありません: ${REVIEW}`);
+  fs.mkdirSync(AVWIKI_CACHE, { recursive: true });
+  fs.mkdirSync(WIKI_CACHE, { recursive: true });
+  const rows = readCsv(REVIEW);
+  const known = avwikiKnownBirths();
+  const cache = new Map();
+  const find = async (name) => {
+    if (!cache.has(name)) {
+      let r = known.has(name) ? { birth: known.get(name), from: 'av-wiki' } : null;
+      if (!r) {
+        try {
+          const b = await avwikiBirthByName(name);
+          if (b) r = { birth: b, from: 'av-wiki' };
+        } catch (e) {
+          console.warn(`av-wiki の検索に失敗: ${name} (${e.message})`);
+        }
+      }
+      if (!r) {
+        try {
+          const b = await wikipediaBirth(name);
+          if (b) r = { birth: b, from: 'Wikipedia' };
+        } catch (e) {
+          console.warn(`Wikipedia の検索に失敗: ${name} (${e.message})`);
+        }
+      }
+      cache.set(name, r);
+      if (cache.size % 25 === 0) console.log(`  ${cache.size} 人を検索`);
+    }
+    return cache.get(name);
+  };
+
+  let filled = 0;
+  const notFound = new Set();
+  for (const r of rows) {
+    if (String(r.適用).trim() !== '○') continue;
+    const names = split(r.出演者);
+    const births = String(r.生年月日 || '').split('／').map((b) => b.trim());
+    const from = [];
+    let changed = false;
+    for (let i = 0; i < names.length; i++) {
+      if (births[i] && births[i] !== '-') continue;
+      const hit = await find(names[i]);
+      if (hit) {
+        births[i] = hit.birth;
+        from.push(`${names[i]}=${hit.from}`);
+        changed = true;
+        filled++;
+      } else {
+        births[i] = '-';
+        notFound.add(names[i]);
+      }
+    }
+    if (changed) {
+      r.生年月日 = names.map((_, i) => births[i] || '-').join('／');
+      r.備考 = [r.備考, `生年月日: ${from.join(', ')}`].filter(Boolean).join(' / ');
+    }
+  }
+  writeCsv(REVIEW, rows);
+  console.log(`
+生年月日を埋めました: ${filled} 件（${cache.size} 人を検索、見つからなかった ${notFound.size} 人）
+一覧: ${REVIEW}（取得元は「備考」列）`);
+  if (notFound.size) console.log(`見つからなかった: ${[...notFound].join('、')}`);
+}
+
+/** 保存済みの av-wiki の女優ページから 名前 -> 生年月日 */
+function avwikiKnownBirths() {
+  const map = new Map();
+  for (const f of fs.readdirSync(AVWIKI_CACHE)) {
+    if (!f.startsWith('av-actress_')) continue;
+    const html = fs.readFileSync(path.join(AVWIKI_CACHE, f), 'utf8');
+    const p = avwikiProfile(html);
+    if (p.name && p.birth) map.set(p.name, p.birth);
+  }
+  return map;
+}
+
+/** 女優ページのプロフィール: { name: '長谷川まや', birth: '1993-06-03' } */
+function avwikiProfile(html) {
+  const out = { name: '', birth: '' };
+  for (const m of String(html || '').matchAll(/<dt[^>]*>([\s\S]*?)<\/dt>\s*<dd[^>]*>([\s\S]*?)<\/dd>/g)) {
+    const key = strip(m[1]).replace(/[：:]$/, '');
+    if (key === 'AV女優名' && !out.name) out.name = strip(m[2]).replace(/[（(].*$/, '').trim();
+    if (key === '生年月日' && !out.birth) out.birth = normalizeDate(strip(m[2])) || '';
+  }
+  return out;
+}
+
+/** av-wiki.net を女優名で検索し、名前が完全に一致する女優ページの生年月日を返す */
+async function avwikiBirthByName(name) {
+  const html = await avwiki(`https://av-wiki.net/?s=${encodeURIComponent(name)}`);
+  const urls = new Set();
+  for (const m of (html || '').matchAll(/<a[^>]*href="(https:\/\/av-wiki\.net\/av-actress\/[^"]+)"[^>]*>([\s\S]*?)<\/a>/g)) {
+    if (strip(m[2]) === name) urls.add(m[1]);
+  }
+  if (urls.size !== 1) return ''; // 見つからない・同名が複数
+  return avwikiBirth([...urls][0]);
+}
+
+/**
+ * Wikipedia（日本語版）の記事のプロフィール欄から生年月日を読む。
+ * 同名の別人を避けるため、AV 女優の記事（本文に「AV女優」を含み、曖昧さ回避ではない）だけを使う
+ */
+async function wikipediaBirth(name) {
+  const cacheFile = path.join(WIKI_CACHE, `${name.replace(/[\\/:*?"<>|\s]/g, '_')}.json`);
+  let json = readJson(cacheFile);
+  if (!json) {
+    await sleep(1000);
+    const q = new URLSearchParams({ action: 'query', prop: 'revisions', rvprop: 'content', rvslots: 'main', titles: name, redirects: '1', format: 'json', formatversion: '2' });
+    const r = await fetch(`https://ja.wikipedia.org/w/api.php?${q}`, { headers: { 'User-Agent': UA }, signal: AbortSignal.timeout(30000) });
+    if (!r.ok) throw new Error(`HTTP ${r.status}`);
+    json = await r.json();
+    fs.writeFileSync(cacheFile, JSON.stringify(json));
+  }
+  const page = json.query?.pages?.[0];
+  const text = page?.revisions?.[0]?.slots?.main?.content || '';
+  if (!text || !/AV女優/.test(text) || /\{\{\s*(Aimai|曖昧さ回避|人名の曖昧さ回避)/i.test(text)) return '';
+  // | 生年月日 = {{生年月日と年齢|1990|5|1}} / 1990年5月1日
+  const line = /\|\s*生年月日\s*=\s*([^\n]*)/.exec(text)?.[1] || '';
+  const tpl = /\{\{\s*生年月日と年齢\s*\|\s*(\d{4})\s*\|\s*(\d{1,2})\s*\|\s*(\d{1,2})/.exec(line);
+  if (tpl) return normalizeDate(`${tpl[1]}-${tpl[2]}-${tpl[3]}`) || '';
+  const plain = /(\d{4})年\s*(\d{1,2})月\s*(\d{1,2})日/.exec(line.replace(/\[\[|\]\]/g, ''));
+  return plain ? normalizeDate(`${plain[1]}-${plain[2]}-${plain[3]}`) || '' : '';
+}
+
 // ---------- 書き込み ----------
 
 async function applyReview() {
@@ -475,5 +605,6 @@ function fail(msg) {
 
 const testIdx = args.indexOf('--test');
 if (testIdx >= 0) await testOne(args[testIdx + 1] || '');
+else if (args.includes('--births')) await fillBirthdates();
 else if (apply) await applyReview();
 else await fetchAll();
