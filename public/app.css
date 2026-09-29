@@ -493,3 +493,12 @@ button.avatar:hover, button.avatar[aria-expanded="true"] { box-shadow: 0 0 0 3px
 @media (max-width: 640px) {
   .person-head .person-thumb { width: 96px; }
 }
+
+/* ---------- 生年月日・当時の年齢 ---------- */
+.age { color: var(--muted); font-size: .92em; }
+.person-head .birth { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; margin-top: 6px; }
+.birth-form { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
+.birth-form[hidden] { display: none; }
+.birth-form input {
+  padding: 6px 10px; border-radius: 8px; border: 1px solid var(--border); background: var(--bg); color: var(--text); color-scheme: dark;
+}

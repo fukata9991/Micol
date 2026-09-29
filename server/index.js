@@ -49,6 +49,9 @@ progress.save(true);
 const userProgress = (user) => (progress.data.users[user.id] ??= {});
 
 const auth = new Auth();
+// 女優の情報（生年月日）: { [名前]: { birthdate: 'YYYY-MM-DD' } }
+const people = new JsonStore('people.json', {}, { pretty: true });
+const birthdateOf = (name) => people.data[name]?.birthdate || null;
 const library = new Library(config);
 const media = new Media(config, library);
 
@@ -64,6 +67,7 @@ function itemDto(it, prog) {
     season: it.nfo?.season ?? null,
     episode: it.nfo?.episode ?? null,
     year: it.nfo?.year ?? null,
+    released: it.nfo?.premiered || null,
     folderId: it.folderId,
     size: it.size,
     added: it.added,
@@ -255,6 +259,8 @@ route('GET', '/api/items/:id', async ({ params, prog }) => {
     container: it.ext.slice(1),
     nfo: it.nfo || null,
     nfoPath: it.nfoPath || null,
+    // 出演者と生年月日（当時の年齢の表示用）
+    cast: (it.nfo?.actors || []).map((name) => ({ name, birthdate: birthdateOf(name) })),
     customThumb: !!it.sideImage,
     video: probe?.video || null,
     audio: probe?.audio || [],
@@ -384,7 +390,7 @@ route('GET', '/api/search', ({ query, prog }) => {
 
 // ---------- 女優（NFO の出演者） ----------
 
-const personDto = (p) => ({ name: p.name, count: p.items.length, thumb: !!p.thumb });
+const personDto = (p) => ({ name: p.name, count: p.items.length, thumb: !!p.thumb, birthdate: birthdateOf(p.name) });
 
 function getPerson(name) {
   const p = library.people().get(name || '');
@@ -396,7 +402,7 @@ route('GET', '/api/people', () => ({
   people: [...library.people().values()].map(personDto),
 }));
 
-// 出演作品（公開日の新しい順、なければ名前順）。名前に / などを含められるよう ?name= で渡す
+// 出演作品（発売日の新しい順、なければ名前順）。名前に / などを含められるよう ?name= で渡す
 route('GET', '/api/person', ({ query, prog }) => {
   const p = getPerson(query.get('name'));
   const items = p.items
@@ -404,6 +410,26 @@ route('GET', '/api/person', ({ query, prog }) => {
     .sort((a, b) => (b.nfo?.premiered || '').localeCompare(a.nfo?.premiered || '') || naturalCompare(a.name, b.name));
   return { ...personDto(p), items: items.map((it) => itemDto(it, prog)) };
 });
+
+// 生年月日の設定（空なら削除）。2024 / 2024-01 / 2024-01-31 の形式
+route('PUT', '/api/person', ({ query, body }) => {
+  const p = getPerson(query.get('name'));
+  const v = String(body.birthdate ?? '').trim();
+  if (v) {
+    const m = /^(\d{4})(?:-(\d{2})(?:-(\d{2}))?)?$/.exec(v);
+    const [y, mo = 1, d = 1] = m ? m.slice(1).filter(Boolean).map(Number) : [];
+    const date = new Date(y, mo - 1, d);
+    if (!m || date.getFullYear() !== y || date.getMonth() !== mo - 1 || date.getDate() !== d || date > new Date() || y < 1900) {
+      throw new HttpError(400, `生年月日は 1995-04-12 の形式で、正しい日付を入力してください: ${v}`);
+    }
+    people.data[p.name] = { ...people.data[p.name], birthdate: v };
+  } else if (people.data[p.name]) {
+    delete people.data[p.name].birthdate;
+    if (!Object.keys(people.data[p.name]).length) delete people.data[p.name];
+  }
+  people.save();
+  return personDto(p);
+}, 'admin');
 
 route('GET', '/api/person/thumb', ({ res, query }) => {
   const p = getPerson(query.get('name'));
@@ -665,6 +691,7 @@ server.listen(port, host, () => {
 function shutdown() {
   try {
     progress.save(true);
+    people.save(true);
     library.index.save(true);
     auth.flush();
   } catch (e) {

@@ -123,11 +123,12 @@ function folderCard(f) {
 }
 
 /** NFO の概要（年・評価・ジャンル・あらすじなど） */
-function nfoBlock(nfo, { people = false } = {}) {
+function nfoBlock(nfo, { people = false, cast = [] } = {}) {
+  const birth = Object.fromEntries(cast.map((c) => [c.name, c.birthdate]));
   if (!nfo) return '';
   const meta = [
     nfo.year,
-    nfo.premiered && nfo.premiered !== String(nfo.year) ? nfo.premiered : null,
+    nfo.premiered && nfo.premiered !== String(nfo.year) ? `発売日 ${nfo.premiered}` : null,
     nfo.rating != null ? `★ ${nfo.rating}` : null,
     nfo.mpaa,
     ...(nfo.genres || []),
@@ -137,7 +138,10 @@ function nfoBlock(nfo, { people = false } = {}) {
         ['原題', nfo.originalTitle],
         ['監督', nfo.directors?.join(', ')],
         ['制作', nfo.studios?.join(', ')],
-        ['出演', nfo.actors?.length ? nfo.actors.map((a) => `<a class="person-link" href="${personHref(a)}">${esc(a)}</a>`).join('、') : '', true],
+        ['出演', nfo.actors?.length ? nfo.actors.map((a) => {
+          const age = ageLabel(birth[a], nfo.premiered);
+          return `<a class="person-link" href="${personHref(a)}">${esc(a)}</a>${age ? `<span class="age">（当時 ${age}）</span>` : ''}`;
+        }).join('、') : '', true],
         ['タグ', nfo.tags?.join(', ')],
       ].filter(([, v]) => v)
     : [];
@@ -467,7 +471,7 @@ async function renderItem(view, id) {
           <button class="btn" id="toggle-watched">${it.watched ? '未視聴にする' : '視聴済みにする'}</button>
         </div>
         ${resume && it.duration ? `<div class="bar"><div style="width:${(it.position / it.duration) * 100}%"></div></div>` : ''}
-        ${nfoBlock(it.nfo, { people: true })}
+        ${nfoBlock(it.nfo, { people: true, cast: it.cast })}
         <dl class="tech">
           <dt>映像</dt><dd>${v ? esc(`${v.codec.toUpperCase()} ${v.profile} ${v.width}×${v.height}`) : '—'}</dd>
           <dt>音声</dt><dd>${it.audio.length ? it.audio.map((a) => esc(audioLabel(a))).join('<br>') : '—'}</dd>
@@ -511,7 +515,7 @@ function nfoEditor(it) {
         <div class="form-row">${text('originalTitle', '原題', n.originalTitle, 'grow')}${text('sortTitle', '並べ替え用タイトル', n.sortTitle, 'grow')}</div>
         <div class="form-row">
           ${text('year', '年', n.year, 'inputmode="numeric" size="6"')}
-          ${text('premiered', '公開日 (2024-01-31)', n.premiered, 'size="12"')}
+          ${text('premiered', '発売日 (2024-01-31)', n.premiered, 'size="12"')}
           ${text('season', 'シーズン', n.season, 'inputmode="numeric" size="5"')}
           ${text('episode', '話数', n.episode, 'inputmode="numeric" size="5"')}
           ${text('rating', '評価 (0〜10)', n.rating, 'inputmode="decimal" size="6"')}
@@ -645,6 +649,36 @@ function thumbEditor(it) {
 
 // ---------- 女優（NFO の出演者） ----------
 
+/** 'YYYY' / 'YYYY-MM' / 'YYYY-MM-DD' を、その期間の最初と最後の日 [[年,月,日], [年,月,日]] にする */
+function dateSpan(s) {
+  const m = /^(\d{4})(?:-(\d{2})(?:-(\d{2}))?)?$/.exec(s || '');
+  if (!m) return null;
+  const y = +m[1];
+  if (m[3]) return [[y, +m[2], +m[3]], [y, +m[2], +m[3]]];
+  if (m[2]) return [[y, +m[2], 1], [y, +m[2], new Date(y, +m[2], 0).getDate()]];
+  return [[y, 1, 1], [y, 12, 31]];
+}
+const ageOn = (b, d) => d[0] - b[0] - (d[1] < b[1] || (d[1] === b[1] && d[2] < b[2]) ? 1 : 0);
+
+/**
+ * 生年月日と日付から年齢を「25歳」の形で返す。どちらかが年や年月だけで
+ * 年齢が 1 つに決まらないときは「24〜25歳」、計算できないときは空文字
+ */
+function ageLabel(birthdate, date) {
+  const b = dateSpan(birthdate);
+  const d = dateSpan(date);
+  if (!b || !d) return '';
+  const max = ageOn(b[0], d[1]);
+  const min = Math.max(0, ageOn(b[1], d[0]));
+  if (max < 0) return '';
+  return min === max ? `${min}歳` : `${min}〜${max}歳`;
+}
+
+function todayStr() {
+  const t = new Date();
+  return `${t.getFullYear()}-${String(t.getMonth() + 1).padStart(2, '0')}-${String(t.getDate()).padStart(2, '0')}`;
+}
+
 const personHref = (name) => `#/person?name=${encodeURIComponent(name)}`;
 
 /** 女優の写真。写真がない・読めないときは頭文字を表示する */
@@ -714,10 +748,46 @@ async function renderPerson(view, name) {
       <div>
         <h1 class="page-title">${esc(d.name)}</h1>
         <div class="muted">${d.items.length} 作品</div>
+        <div class="birth">${d.birthdate ? `生年月日 ${esc(d.birthdate)}（${ageLabel(d.birthdate, todayStr())}）` : '<span class="muted">生年月日 未設定</span>'}
+          ${me.admin ? '<button class="btn small" id="edit-birth">生年月日を設定</button>' : ''}</div>
+        <form class="birth-form" id="birth-form" hidden>
+          <input type="date" name="birthdate" max="${todayStr()}" aria-label="生年月日">
+          <button class="btn small primary">保存</button>
+          <button type="button" class="btn small" data-act="clear">削除</button>
+          <button type="button" class="btn small" data-act="cancel">キャンセル</button>
+        </form>
         ${target ? `<div class="actions"><a class="btn primary" href="#/play/${target.id}">▶ ${target.position > 10 ? '続きを再生' : '再生'}</a></div>` : ''}
       </div>
     </div>
-    <div class="grid">${d.items.map((it) => itemCard(it)).join('')}</div>`;
+    <div class="grid">${d.items.map((it) => itemCard(it, [
+      it.released ? `発売 ${it.released}` : '',
+      ageLabel(d.birthdate, it.released) ? `当時 ${ageLabel(d.birthdate, it.released)}` : '',
+    ].filter(Boolean).join(' ・ '))).join('')}</div>`;
+
+  if (!me.admin) return;
+  const form = $('#birth-form', view);
+  const save = async (birthdate) => {
+    try {
+      await api(`/api/person?name=${encodeURIComponent(d.name)}`, { method: 'PUT', body: { birthdate } });
+      toast(birthdate ? '生年月日を保存しました' : '生年月日を削除しました');
+      router();
+    } catch (e) { toast(e.message); }
+  };
+  $('#edit-birth', view).onclick = () => {
+    form.hidden = false;
+    form.birthdate.value = /^\d{4}-\d{2}-\d{2}$/.test(d.birthdate || '') ? d.birthdate : '';
+    form.birthdate.focus();
+  };
+  form.onsubmit = (e) => {
+    e.preventDefault();
+    if (!form.birthdate.value) return toast('生年月日を入力してください');
+    save(form.birthdate.value);
+  };
+  form.addEventListener('click', (e) => {
+    const act = e.target.closest('[data-act]')?.dataset.act;
+    if (act === 'cancel') form.hidden = true;
+    if (act === 'clear' && confirm(`${d.name} の生年月日を削除しますか？`)) save('');
+  });
 }
 
 // ---------- 検索 ----------
