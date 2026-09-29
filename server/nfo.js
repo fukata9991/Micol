@@ -38,16 +38,20 @@ export async function readNfo(file, baseDir = path.dirname(file)) {
     const v = parseFloat(all(ratings, 'value')[0]);
     if (Number.isFinite(v)) rating = v;
   }
-  // 出演者: 名前と写真（<actor><thumb> の画像、なければ Kodi 形式の .actors フォルダの画像）
+  // 出演者: 名前と写真（Kodi 形式の .actors フォルダの画像 → <actor><thumb> のローカルの画像 → <thumb> の URL）
   const actors = [];
   const actorThumbs = {};
+  const actorThumbSources = {}; // <actor><thumb> に書かれた画像（URL か実在するローカルのファイル。.actors への取り込み用）
   const actorBirthdates = {};
   for (const m of xml.matchAll(/<actor[\s>]([\s\S]*?)<\/actor>/gi)) {
     const name = all(m[1], 'name')[0];
     if (!name || actors.includes(name) || actors.length >= 50) continue;
     actors.push(name);
-    const t = actorThumb(baseDir, name, all(m[1], 'thumb')[0]);
+    const raw = all(m[1], 'thumb')[0];
+    const t = actorThumb(baseDir, name, raw);
     if (t) actorThumbs[name] = t;
+    const src = raw && (/^https?:\/\//i.test(raw) ? raw : IMAGE_EXT.includes(path.extname(raw).toLowerCase()) ? resolveLocal(baseDir, raw) : null);
+    if (src) actorThumbSources[name] = src;
     const b = normalizeDate(all(m[1], 'birthdate')[0]);
     if (b) actorBirthdates[name] = b;
   }
@@ -78,6 +82,7 @@ export async function readNfo(file, baseDir = path.dirname(file)) {
     tags: unique(all(body, 'tag')),
     actors,
     actorThumbs: Object.keys(actorThumbs).length ? actorThumbs : null,
+    actorThumbSources: Object.keys(actorThumbSources).length ? actorThumbSources : null,
     actorBirthdates: Object.keys(actorBirthdates).length ? actorBirthdates : null,
     thumb,
   });
@@ -85,14 +90,11 @@ export async function readNfo(file, baseDir = path.dirname(file)) {
 
 const IMAGE_EXT = ['.jpg', '.jpeg', '.png', '.webp'];
 
-/** 出演者の写真: URL ならそのまま、ローカルなら実在する画像ファイルのパス、なければ null */
+/**
+ * 出演者の写真: Kodi 形式の 動画のフォルダの .actors/名前.jpg（空白は _ に置き換えた名前も探す）
+ * → <thumb> のローカルの画像ファイル → <thumb> の URL の順。なければ null
+ */
 function actorThumb(baseDir, name, thumb) {
-  if (thumb && /^https?:\/\//i.test(thumb)) return thumb;
-  if (thumb && IMAGE_EXT.includes(path.extname(thumb).toLowerCase())) {
-    const p = resolveLocal(baseDir, thumb);
-    if (p) return p;
-  }
-  // Kodi 形式: 動画のフォルダの .actors/名前.jpg（空白は _ に置き換えた名前も探す）
   for (const n of new Set([name, name.replace(/ /g, '_')])) {
     if (/[\\/:*?"<>|]/.test(n)) continue;
     for (const ext of IMAGE_EXT) {
@@ -100,6 +102,11 @@ function actorThumb(baseDir, name, thumb) {
       if (fss.existsSync(p)) return p;
     }
   }
+  if (thumb && IMAGE_EXT.includes(path.extname(thumb).toLowerCase()) && !/^https?:\/\//i.test(thumb)) {
+    const p = resolveLocal(baseDir, thumb);
+    if (p) return p;
+  }
+  if (thumb && /^https?:\/\//i.test(thumb)) return thumb;
   return null;
 }
 

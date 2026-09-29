@@ -6,6 +6,7 @@
 //   node tools/fetch-actors.js --titles                … 一覧の出演者が空の行を、av-wiki.net を品番・タイトルで検索して埋める
 //   node tools/fetch-actors.js --romaji                … ファイル名がローマ字の女優名だけの行（TFF-109 Rena Matsumoto 1 など）を日本語名で埋める
 //   node tools/fetch-actors.js --aliases               … 同じ女優の別名の候補を data/people-aliases-suggested.json に書き出す（Micol が取り込む）
+//   node tools/fetch-actors.js --photos                … 女優の画像を探して、動画フォルダの .actors/名義.jpg に保存する
 //   node tools/fetch-actors.js --tff                   … TFF（Tokyo Face Fuck）の行を tokyo-face-fuck.com の出演女優リストで埋める
 //   node tools/fetch-actors.js --test MILK-163         … 1 作品だけ検索して結果を表示する（確認用）
 //   --no-web を付けるとネットには接続せず、ファイル名からだけ取得する
@@ -1007,6 +1008,170 @@ ${file}
 Micol の女優一覧を開くと取り込まれます（1 か所だけのものは「別名の候補」で確認できます）`);
 }
 
+// ---------- 女優の画像（--photos） ----------
+//
+// ライブラリの NFO の出演者ごとに画像を用意し、その作品の動画フォルダの .actors/名義.jpg に保存する（Kodi 形式。Micol はこれを優先して表示する）。
+//   1. その作品の NFO の <actor><thumb> にある画像（URL ならダウンロード、ローカルのファイルならコピー）
+//   2. 同じ女優（別名を含む）の他の作品の NFO にある画像
+//   3. FANZA の女優画像（r18.dev の image_url → https://pics.dmm.co.jp/mono/actjpgs/…）
+//   4. みんなのAV の女優ページの写真（名前が一致する女優が 1 人だけの場合）
+// 既に .actors に画像がある名義は変更しない。NFO の <thumb> の記述もそのまま残す
+
+const PHOTO_CACHE = path.join(CACHE_DIR, 'photos');
+const PHOTO_EXT = { 'image/jpeg': '.jpg', 'image/png': '.png', 'image/webp': '.webp' };
+
+async function fetchPhotos() {
+  fs.mkdirSync(PHOTO_CACHE, { recursive: true });
+  fs.mkdirSync(MINNANO_CACHE, { recursive: true });
+  // ライブラリの出演者: 名義 -> Map(動画フォルダ -> その作品の NFO の <thumb> の画像 | null)
+  const videos = [];
+  for (const r of roots) walk(r, videos);
+  const folders = new Map();
+  for (const v of videos) {
+    const nfo = await readNfo(v.nfoPath, v.dir);
+    for (const name of nfo?.actors || []) {
+      if (!folders.has(name)) folders.set(name, new Map());
+      const dirs = folders.get(name);
+      if (!dirs.get(v.dir)) dirs.set(v.dir, nfo.actorThumbSources?.[name] || null);
+    }
+  }
+  // 別名のグループ（Micol の data/aliases.json）
+  const groups = readJson(path.join(DATA_DIR, 'aliases.json'))?.groups || [];
+  const groupOf = (name) => groups.find((g) => g.includes(name)) || [name];
+
+  // r18.dev: 名前 -> 画像ファイル名
+  const r18Images = new Map();
+  if (fs.existsSync(R18_CACHE)) {
+    for (const f of fs.readdirSync(R18_CACHE)) {
+      if (!f.startsWith('combined=')) continue;
+      for (const a of readJson(path.join(R18_CACHE, f))?.actresses || []) {
+        if (!a.image_url || /now_printing|noimage/i.test(a.image_url)) continue;
+        const m = /^(.+?)\s*[（(]([^（）()]+)[）)]\s*$/.exec(String(a.name_kanji || ''));
+        for (const n of m ? [m[1], ...m[2].split(/[、,，]/)] : [a.name_kanji]) if (n?.trim()) r18Images.set(n.trim(), a.image_url);
+      }
+    }
+  }
+
+  const needs = (name, dir) => !/[\\/:*?"<>|]/.test(name) && !['.jpg', '.jpeg', '.png', '.webp'].some((ext) => fs.existsSync(path.join(dir, '.actors', name + ext)) || fs.existsSync(path.join(dir, '.actors', name.replace(/ /g, '_') + ext)));
+  const todo = [...folders].filter(([name, dirs]) => [...dirs.keys()].some((d) => needs(name, d)));
+  console.log(`女優の画像を用意します: ${todo.length} 名義（${folders.size} 名義のうち、.actors に画像が無い作品があるもの）`);
+
+  // NFO の <thumb> の画像（URL・ローカル）: 元の画像 -> 取り込んだ画像
+  const own = new Map();
+  const ownPhoto = async (src) => {
+    if (!own.has(src)) {
+      let p = null;
+      try {
+        p = /^https?:/i.test(src) ? await downloadPhoto(src, 'NFO の画像') : localPhoto(src);
+      } catch (e) {
+        console.warn(`画像を取得できません: ${src} (${e.message})`);
+      }
+      own.set(src, p);
+    }
+    return own.get(src);
+  };
+
+  const byGroup = new Map(); // グループの先頭の名前 -> 画像
+  const hashes = new Map(); // 画像のハッシュ -> グループ（写真未登録の共通画像を見分ける）
+  let done = 0;
+  for (const [name] of todo) {
+    const group = groupOf(name);
+    const key = group[0];
+    if (byGroup.has(key)) continue;
+    let photo = null;
+    // 2. 同じ女優の作品の NFO にある画像
+    for (const n of group) {
+      for (const src of folders.get(n)?.values() || []) {
+        if (src && (photo = await ownPhoto(src))) break;
+      }
+      if (photo) break;
+    }
+    // 3. FANZA
+    for (const n of group) {
+      if (photo) break;
+      const img = r18Images.get(n);
+      if (img) photo = await downloadPhoto(`https://pics.dmm.co.jp/mono/actjpgs/${img}`, 'FANZA');
+    }
+    // 4. みんなのAV
+    for (const n of group) {
+      if (photo) break;
+      try {
+        const url = await minnanoPhotoUrl(n);
+        if (url) photo = await downloadPhoto(url, 'みんなのAV');
+      } catch (e) {
+        console.warn(`みんなのAV の検索に失敗: ${n} (${e.message})`);
+      }
+    }
+    if (photo && photo.from !== 'NFO の画像') {
+      if (!hashes.has(photo.hash)) hashes.set(photo.hash, []);
+      hashes.get(photo.hash).push(key);
+    }
+    byGroup.set(key, photo);
+    if (++done % 25 === 0) console.log(`  ${done} 人を検索`);
+  }
+  // 3 人以上で同じ画像は「写真未登録」の共通画像とみなして使わない
+  for (const keys of hashes.values()) if (keys.length >= 3) for (const k of keys) byGroup.set(k, null);
+
+  let saved = 0;
+  const stats = {};
+  const people = new Set();
+  const missing = new Set();
+  for (const [name, dirs] of todo) {
+    for (const [dir, src] of dirs) {
+      if (!needs(name, dir)) continue;
+      // 1. その作品の NFO の画像 → 同じ女優の画像
+      const photo = (src && (await ownPhoto(src))) || byGroup.get(groupOf(name)[0]);
+      if (!photo) {
+        missing.add(name);
+        continue;
+      }
+      fs.mkdirSync(path.join(dir, '.actors'), { recursive: true });
+      fs.copyFileSync(photo.file, path.join(dir, '.actors', name + photo.ext));
+      stats[photo.from] = (stats[photo.from] || 0) + 1;
+      saved++;
+      people.add(name);
+    }
+  }
+  console.log(`
+.actors に保存: ${saved} 件（${people.size} 名義）  ${Object.entries(stats).map(([k, v]) => `${k} ${v}`).join('・')}
+画像が見つからなかった名義: ${missing.size}${missing.size ? `（${[...missing].slice(0, 30).join('、')}${missing.size > 30 ? ' …' : ''}）` : ''}
+Micol はフォルダの変更を検知して読み込み直します`);
+}
+
+/** 画像をダウンロードして data/cache/photos に保存する（同じ URL は再利用）。画像でなければ null */
+async function downloadPhoto(url, from) {
+  const base = path.join(PHOTO_CACHE, crypto.createHash('sha1').update(url).digest('hex').slice(0, 20));
+  let file = Object.values(PHOTO_EXT).map((ext) => base + ext).find((f) => fs.existsSync(f));
+  if (!file) {
+    await sleep(1000);
+    const r = await politeFetch(url, { headers: { 'User-Agent': UA } });
+    const ext = PHOTO_EXT[(r.headers.get('content-type') || '').split(';')[0].trim()];
+    const buf = Buffer.from(await r.arrayBuffer());
+    // 画像でない・極端に小さい（ダミーの 1px 画像など）ものは使わない
+    if (!r.ok || !ext || buf.length < 1500) return null;
+    file = base + ext;
+    fs.writeFileSync(file, buf);
+  }
+  return { file, ext: path.extname(file), from, hash: crypto.createHash('sha1').update(fs.readFileSync(file)).digest('hex') };
+}
+
+/** NFO に書かれたローカルの画像ファイル */
+function localPhoto(file) {
+  const ext = path.extname(file).toLowerCase();
+  if (!fs.existsSync(file) || !['.jpg', '.jpeg', '.png', '.webp'].includes(ext)) return null;
+  return { file, ext: ext === '.jpeg' ? '.jpg' : ext, from: 'NFO の画像', hash: '' };
+}
+
+/** みんなのAV で名前が一致する女優が 1 人だけなら、その女優ページの写真の URL（"image": "…"） */
+async function minnanoPhotoUrl(name) {
+  const names = await minnanoIndex();
+  const ids = names.get(name) || [];
+  if (ids.length !== 1) return '';
+  const html = await minnanoGet(`actress${ids[0]}.html`);
+  const url = /"@type":\s*"Person"[\s\S]*?"image":\s*"([^"]+)"/.exec(html || '')?.[1] || '';
+  return /no_?image|noimg|dummy/i.test(url) ? '' : url;
+}
+
 // ---------- 書き込み ----------
 
 async function applyReview() {
@@ -1159,5 +1324,6 @@ else if (args.includes('--titles')) await fillFromTitles();
 else if (args.includes('--romaji')) await fillFromRomaji();
 else if (args.includes('--tff')) await fillFromTff();
 else if (args.includes('--aliases')) await suggestAliases();
+else if (args.includes('--photos')) await fetchPhotos();
 else if (apply) await applyReview();
 else await fetchAll();

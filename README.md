@@ -143,6 +143,9 @@ Kodi / Jellyfin 形式の NFO ファイルに対応しています（UTF-8 / Shi
    - `node tools\fetch-actors.js --titles` で、出演者が空の行を av-wiki.net の品番検索・タイトル検索で埋めます
      （品番で確かめられたものは `○`、タイトルだけで見つけたものは `?`）
 3. `node tools\fetch-actors.js --apply` … `○` の行を NFO に書き込みます
+5. `node tools\fetch-actors.js --photos` … 女優の画像を、その作品の動画フォルダの `.actors\名義.jpg` に保存します。
+   NFO の `<actor><thumb>` にある画像（URL・Jellyfin のフォルダなどのローカルの画像）を取り込み、無ければ
+   FANZA の女優画像 → みんなのAV の写真の順に探します（既に `.actors` に画像がある名義は変更しません。別名の女優は画像を共有）
 4. `node tools\fetch-actors.js --aliases` … 同じ女優の別名の候補（r18.dev・av-wiki・tokyo-face-fuck.com・Wikipedia）を
    `data\people-aliases-suggested.json` に書き出します。Micol は 2 か所以上の情報源で一致した組を自動で同じ女優にまとめ、
    残りは女優一覧の「別名の候補を確認」で「同じ女優」「違う」を選べます
@@ -154,6 +157,7 @@ Kodi / Jellyfin 形式の NFO ファイルに対応しています（UTF-8 / Shi
 - 女優ページに別名と、作品ごとの名義（「三崎あかり 名義」など）を表示します。別名で検索しても見つかります
 - 生年月日はどの名義で設定しても共有され、当時の年齢に使われます
 - 管理者は女優ページの「別名を編集」「別の女優と統合」で直せます（外した名義は候補から再び取り込まれません）
+- 女優の画像は、動画フォルダの `.actors\名義.jpg` → NFO の `<thumb>` のローカルの画像 → `<thumb>` の URL の順に使います
 - 別名は `data\aliases.json` に保存します。NFO の出演者名（作品ごとの名義）は変更しません
 
 - 出演者が既に入っている NFO は出演者を変えず、生年月日だけを足します
