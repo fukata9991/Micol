@@ -152,7 +152,7 @@ Kodi / Jellyfin 形式の NFO ファイルに対応しています（UTF-8 / Shi
    （タイトルの日本語名・作品番号）で日本語名にします（作品番号まで一致したものは `○`、名前だけのものは `?`）
 8. `node tools\fetch-actors.js --spermmania` … Spermmania（`001-Yui Kawagoe.mp4`）の行を、1pondo.com の作品ページ
    （タイトルの日本語名）で日本語名にします（作品番号まで一致するので `○`。見つからない女優はローマ字名のまま `?`）
-4. `node tools\fetch-actors.js --aliases` … 同じ女優の別名の候補（r18.dev・av-wiki・tokyo-face-fuck.com・Wikipedia・このAV女優の名前教えてwiki）を
+4. `node tools\fetch-actors.js --aliases` … 同じ女優の別名の候補（r18.dev・av-wiki・tokyo-face-fuck.com・Wikipedia・このAV女優の名前教えてwiki・みんなのAV）を
    `data\people-aliases-suggested.json` に書き出します。Micol は 2 か所以上の情報源で一致した組を自動で同じ女優にまとめ、
    残りは女優一覧の「別名の候補を確認」で「同じ女優」「違う」を選べます
 

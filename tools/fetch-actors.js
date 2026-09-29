@@ -552,6 +552,11 @@ async function fillBirthdates() {
       return hit ? { birth: hit.birth, from: `Wikipedia(${hit.title})` } : null;
     },
     async (name) => {
+      // みんなのAV の保存済みの女優ページで、別名にその名前があるもの
+      const q = minnanoKnownProfiles().find((x) => x.birth && x.aliases.includes(name));
+      return q ? { birth: q.birth, from: `みんなのAV(${q.name} の別名)` } : null;
+    },
+    async (name) => {
       for (const n of [name, ...(aliases.get(name) || [])]) {
         const b = await minnanoBirth(n);
         if (b) return { birth: b, from: n === name ? 'みんなのAV' : `みんなのAV(別名 ${n})` };
@@ -794,6 +799,47 @@ async function minnanoBirth(name) {
   return (b && normalizeDate(b)) || '';
 }
 
+/**
+ * みんなのAV の女優ページのプロフィール: { name, aliases, birth }。
+ *   <h2>霧宮てん （きりみやてん / Kirimiya Ten）</h2> … <span>別名</span><p>紺野いろは （こんのいろは / Konno Iroha）</p> …
+ * 「(注)…」のような注意書きや「(地下アイドル)」のような括弧書きは除く
+ */
+function parseMinnano(html) {
+  if (!html) return null;
+  const area = html.slice(Math.max(0, html.indexOf('act-profile')), html.indexOf('act-profile') + 8000);
+  const clean = (s) => strip(s).replace(/\s*[（(][^（）()]*[）)]/g, '').replace(/\s+/g, ' ').trim();
+  const name = clean(/<h2>([\s\S]*?)<\/h2>/.exec(area)?.[1] || '');
+  if (!name) return null;
+  const aliases = [...area.matchAll(/<span>別名<\/span>\s*<p>([\s\S]*?)<\/p>/g)]
+    .map((m) => strip(m[1]))
+    .filter((s) => !/^[(（]?注/.test(s))
+    .map((s) => s.replace(/\s*[（(][^（）()]*[）)]/g, '').trim())
+    .filter((s) => s && s !== name && s.length <= 20);
+  const b = /"birthDate"\s*:\s*"([^"]+)"/.exec(html)?.[1];
+  return { name, aliases: [...new Set(aliases)], birth: (b && normalizeDate(b)) || '' };
+}
+
+/** 保存済みのみんなのAV の女優ページのプロフィール一覧 */
+let minnanoKnown = null;
+function minnanoKnownProfiles() {
+  if (minnanoKnown) return minnanoKnown;
+  minnanoKnown = [];
+  if (!fs.existsSync(MINNANO_CACHE)) return minnanoKnown;
+  for (const f of fs.readdirSync(MINNANO_CACHE)) {
+    if (!/^actress\d+\.html/.test(f)) continue;
+    const p = parseMinnano(fs.readFileSync(path.join(MINNANO_CACHE, f), 'utf8'));
+    if (p) minnanoKnown.push(p);
+  }
+  return minnanoKnown;
+}
+
+/** 名前が一致する女優が 1 人だけなら、そのみんなのAV の女優ページのプロフィール */
+async function minnanoProfile(name) {
+  const ids = (await minnanoIndex()).get(name) || [];
+  if (ids.length !== 1) return null;
+  return parseMinnano(await minnanoGet(`actress${ids[0]}.html`));
+}
+
 async function minnanoGet(rel) {
   const cacheFile = path.join(MINNANO_CACHE, `${rel.replace(/[\\/:*?"<>|&=]/g, '_')}.html`);
   if (fs.existsSync(cacheFile)) {
@@ -964,7 +1010,7 @@ TFF の行を埋めました: ${filled} 行（○）${missing.size ? `\n作品�
 // 取得済みのデータ（キャッシュ）から「同じ女優の名義」の組を集め、どの情報源が一致しているかを書き出す。
 // Micol はこのファイルを読み、2 か所以上の情報源で一致した組を自動で同じ女優にまとめる（残りは画面で確認）
 //   r18.dev: "希咲エマ（HARUKI、加藤はる希）"  av-wiki: 別名義  tokyo-face-fuck.com: 別名  Wikipedia: {{AV女優}} の 別名
-//   このAV女優の名前教えてwiki（seesaawiki）: 名前(別名)・旧名義&別名
+//   このAV女優の名前教えてwiki（seesaawiki）: 名前(別名)・旧名義&別名  みんなのAV: 女優ページの 別名
 
 async function suggestAliases() {
   const pairs = new Map(); // 'a\tb' -> { names: [a, b], sources: Set }
@@ -1031,6 +1077,17 @@ async function suggestAliases() {
       console.warn(`このAV女優の名前教えてwiki の取得に失敗: ${name} (${e.message})`);
     }
     if (++n % 50 === 0) console.log(`  このAV女優の名前教えてwiki: ${n} / ${library.size} 人`);
+  }
+  // みんなのAV: ライブラリの女優のうち、一覧で名前が 1 人だけ一致する女優のページの 別名
+  n = 0;
+  for (const name of library) {
+    try {
+      const p = await minnanoProfile(name);
+      if (p?.aliases.length) addGroup([p.name, name, ...p.aliases], 'みんなのAV');
+    } catch (e) {
+      console.warn(`みんなのAV の取得に失敗: ${name} (${e.message})`);
+    }
+    if (++n % 50 === 0) console.log(`  みんなのAV: ${n} / ${library.size} 人`);
   }
   const out = [...pairs.values()]
     .filter((p) => p.names.some((n) => library.has(n)))
