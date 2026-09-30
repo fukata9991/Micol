@@ -388,6 +388,7 @@ input[type=range].seek:hover::-webkit-slider-thumb { margin-top: -4px; }
 
 /* ---------- ログイン ---------- */
 body.auth-mode .topbar, body.auth-mode .sidebar, body.auth-mode .sidebar-backdrop { display: none; }
+body.auth-mode main { margin-left: 0 !important; } /* サイドバーの分を空けずに中央に出す */
 .auth-box {
   max-width: 380px; margin: 10vh auto 0; padding: 28px; display: flex; flex-direction: column; gap: 14px;
   background: var(--surface); border: 1px solid var(--border); border-radius: 14px;
