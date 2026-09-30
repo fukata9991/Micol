@@ -6,7 +6,7 @@ import crypto from 'node:crypto';
 import { execFile, execFileSync } from 'node:child_process';
 import { JsonStore, HttpError, ROOT, DATA_DIR, naturalCompare } from './store.js';
 import { Library } from './library.js';
-import { nfoFields, normalizeDate } from './nfo.js';
+import { nfoFields, normalizeDate, readNfo } from './nfo.js';
 import { Media } from './media.js';
 import { Auth, isDirectLan } from './auth.js';
 
@@ -340,7 +340,15 @@ route('GET', '/api/items/:id', async ({ params, prog }) => {
     nfo: it.nfo || null,
     nfoPath: it.nfoPath || null,
     // 出演者と生年月日（当時の年齢の表示用）
-    cast: (it.nfo?.actors || []).map((name) => ({ name, birthdate: birthdateOf(name) || it.nfo.actorBirthdates?.[name] || null })),
+    // 出演者: 名義・生年月日・写真の版（この作品の .actors の写真 → 同じ女優の写真）
+    cast: (it.nfo?.actors || []).map((name) => {
+      const person = library.personOf(name);
+      return {
+        name,
+        birthdate: birthdateOf(name, person) || it.nfo.actorBirthdates?.[name] || null,
+        thumb: photoVersion(it.nfo.actorThumbs?.[name] || person?.thumb),
+      };
+    }),
     customThumb: !!it.sideImage,
     video: probe?.video || null,
     audio: probe?.audio || [],
@@ -470,11 +478,22 @@ route('GET', '/api/search', ({ query, prog }) => {
 
 // ---------- 女優（NFO の出演者） ----------
 
+/** 写真の版（画像の URL に付けて、写真を変えたらすぐ新しいものが出るようにする）。写真が無ければ null */
+function photoVersion(thumb) {
+  if (!thumb) return null;
+  if (/^https?:\/\//i.test(thumb)) return 'u';
+  try {
+    return String(Math.round(fs.statSync(thumb).mtimeMs));
+  } catch {
+    return null;
+  }
+}
+
 const personDto = (p) => ({
   name: p.name,
   aliases: p.names.filter((n) => n !== p.name),
   count: p.items.length,
-  thumb: !!p.thumb,
+  thumb: photoVersion(p.thumb),
   birthdate: birthdateOf(p.name, p),
 });
 
@@ -578,14 +597,42 @@ route('PUT', '/api/person', ({ query, body }) => {
 
 route('GET', '/api/person/thumb', ({ res, query }) => {
   const p = getPerson(query.get('name'));
-  if (!p.thumb) throw new HttpError(404, '写真なし');
+  // 作品の出演欄からは ?item= を付け、その作品の名義の写真（.actors）があればそれを使う
+  const it = query.get('item') ? library.items.get(query.get('item')) : null;
+  const thumb = it?.nfo?.actorThumbs?.[query.get('name')] || p.thumb;
+  if (!thumb) throw new HttpError(404, '写真なし');
+  const maxAge = query.has('v') ? 86400 * 30 : 300;
   // NFO に URL が書かれている場合はその画像へ転送する
-  if (/^https?:\/\//i.test(p.thumb)) {
-    res.writeHead(302, { Location: p.thumb, 'Cache-Control': 'max-age=3600' });
+  if (/^https?:\/\//i.test(thumb)) {
+    res.writeHead(302, { Location: thumb, 'Cache-Control': `max-age=${maxAge}` });
     return res.end();
   }
-  media.sendImage(res, p.thumb, 3600);
+  media.sendImage(res, thumb, maxAge);
 });
+
+// 写真の変更（画像を送る）・削除。出演作のフォルダの .actors/名義.jpg を書き換える（別名義の作品も）
+route('PUT', '/api/person/photo', async ({ query, body }) => {
+  const p = getPerson(query.get('name'));
+  if (!Buffer.isBuffer(body)) throw new HttpError(400, '画像を送ってください');
+  const written = await media.setPersonPhoto(p, library.items, body);
+  await reloadActorThumbs(p);
+  return { ok: true, written, person: personDto(library.personOf(p.name)) };
+}, 'admin');
+
+route('DELETE', '/api/person/photo', async ({ query }) => {
+  const p = getPerson(query.get('name'));
+  const removed = media.clearPersonPhoto(p, library.items);
+  await reloadActorThumbs(p);
+  return { ok: true, removed, person: personDto(library.personOf(p.name)) };
+}, 'admin');
+
+/** 写真を変えた女優の出演作の NFO を読み直して、すぐ新しい写真が使われるようにする（フォルダの監視による再スキャンを待たない） */
+async function reloadActorThumbs(p) {
+  for (const id of p.items) {
+    const it = library.items.get(id);
+    if (it?.nfoPath) it.nfo = (await readNfo(it.nfoPath, path.dirname(it.path))) || it.nfo;
+  }
+}
 
 route('GET', '/api/status', () => ({
   version: VERSION,

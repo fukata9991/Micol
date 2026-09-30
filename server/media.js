@@ -473,6 +473,46 @@ export class Media {
     return job;
   }
 
+  // ---------- 女優の写真 ----------
+
+  /**
+   * 女優の写真を変える: 画像を JPEG（幅 600px まで）にして、その女優の出演作のフォルダの .actors/名義.jpg に書く（別名義の作品も）。
+   * 同じ名義の別の形式（.png など）は消す。書いたファイルの数を返す
+   */
+  async setPersonPhoto(person, items, image) {
+    fs.mkdirSync(UPLOAD_DIR, { recursive: true });
+    const src = path.join(UPLOAD_DIR, `person-${process.pid}-${Date.now()}.upload`);
+    const jpg = `${src}.jpg`;
+    fs.writeFileSync(src, image);
+    try {
+      await this.run(this.ffmpeg, ['-hide_banner', '-loglevel', 'error', '-y', '-i', src, '-vf', "scale='min(600,iw)':-2", '-q:v', '3', '-frames:v', '1', '-update', '1', jpg], 30000);
+    } catch {
+      throw new HttpError(400, '画像を読み込めません（JPEG / PNG / WebP に対応）');
+    } finally {
+      fs.rmSync(src, { force: true });
+    }
+    let written = 0;
+    try {
+      for (const { dir, name } of personPhotoTargets(person, items)) {
+        const actors = path.join(dir, '.actors');
+        removePersonPhoto(actors, name);
+        fs.mkdirSync(actors, { recursive: true });
+        fs.copyFileSync(jpg, path.join(actors, `${name}.jpg`));
+        written++;
+      }
+    } finally {
+      fs.rmSync(jpg, { force: true });
+    }
+    return written;
+  }
+
+  /** 女優の写真を消す（出演作のフォルダの .actors/名義.* を消す）。消したファイルの数を返す */
+  clearPersonPhoto(person, items) {
+    let removed = 0;
+    for (const { dir, name } of personPhotoTargets(person, items)) removed += removePersonPhoto(path.join(dir, '.actors'), name);
+    return removed;
+  }
+
   /** 縮小版を 1 枚ずつ作る（ほかの処理の邪魔をしないよう、1 枚ごとに少し間をあける） */
   async warmSmallImages(files) {
     const started = Date.now();
@@ -562,6 +602,38 @@ function encoderArgs(tc) {
   if (enc.includes('qsv')) return ['-c:v', enc, '-preset', 'veryfast', '-global_quality', q];
   if (enc.includes('amf')) return ['-c:v', enc, '-quality', 'speed', '-rc', 'cqp', '-qp_i', q, '-qp_p', q];
   return ['-c:v', 'libx264', '-preset', tc.preset || 'veryfast', '-crf', q];
+}
+
+/** 写真を書く場所: 出演作ごとの（動画のフォルダ, その作品での名義）。同じ組は 1 回だけ */
+function personPhotoTargets(person, items) {
+  const seen = new Set();
+  const out = [];
+  for (const id of person.items) {
+    const it = items.get(id);
+    const name = person.credits[id];
+    if (!it || !name || /[\\/:*?"<>|]/.test(name)) continue;
+    const dir = path.dirname(it.path);
+    const key = `${dir}\n${name}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push({ dir, name });
+  }
+  return out;
+}
+
+/** .actors の その名義の写真（.jpg .jpeg .png .webp、空白を _ にした名前も）を消す */
+function removePersonPhoto(actorsDir, name) {
+  let n = 0;
+  for (const base of new Set([name, name.replace(/ /g, '_')])) {
+    for (const ext of ['.jpg', '.jpeg', '.png', '.webp']) {
+      const f = path.join(actorsDir, base + ext);
+      if (fs.existsSync(f)) {
+        fs.rmSync(f, { force: true });
+        n++;
+      }
+    }
+  }
+  return n;
 }
 
 /** JPEG の幅・高さを読む（SOF マーカーを探す） */

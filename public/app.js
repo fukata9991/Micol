@@ -125,8 +125,9 @@ function folderCard(f) {
 }
 
 /** NFO の概要（年・評価・ジャンル・あらすじなど） */
-function nfoBlock(nfo, { people = false, cast = [] } = {}) {
+function nfoBlock(nfo, { people = false, cast = [], itemId = null } = {}) {
   const birth = Object.fromEntries(cast.map((c) => [c.name, c.birthdate]));
+  const photo = Object.fromEntries(cast.map((c) => [c.name, c.thumb]));
   if (!nfo) return '';
   const meta = [
     nfo.year,
@@ -140,10 +141,14 @@ function nfoBlock(nfo, { people = false, cast = [] } = {}) {
         ['原題', nfo.originalTitle],
         ['監督', nfo.directors?.join(', ')],
         ['制作', nfo.studios?.join(', ')],
-        ['出演', nfo.actors?.length ? nfo.actors.map((a) => {
+        ['出演', nfo.actors?.length ? `<div class="cast">${nfo.actors.map((a) => {
           const age = ageLabel(birth[a], nfo.premiered);
-          return `<a class="person-link" href="${personHref(a)}">${esc(a)}</a>${age ? `<span class="age">（当時 ${age}）</span>` : ''}`;
-        }).join('、') : '', true],
+          const src = photo[a] ? `/api/person/thumb?name=${encodeURIComponent(a)}${itemId ? `&item=${itemId}` : ''}&v=${encodeURIComponent(photo[a])}` : '';
+          return `<a class="cast-chip" href="${personHref(a)}">
+            <span class="cast-photo" style="--hue:${nameHue(a)}"><span>${esc([...a.trim()][0] || '?')}</span>${src ? `<img src="${src}" alt="" loading="lazy" referrerpolicy="no-referrer" onerror="this.remove()">` : ''}</span>
+            <span class="cast-name"><span class="person-link">${esc(a)}</span>${age ? `<span class="age">当時 ${age}</span>` : ''}</span>
+          </a>`;
+        }).join('')}</div>` : '', true],
         ['タグ', nfo.tags?.join(', ')],
       ].filter(([, v]) => v)
     : [];
@@ -532,7 +537,7 @@ async function renderItem(view, id) {
           <button class="btn" id="toggle-watched">${it.watched ? '未視聴にする' : '視聴済みにする'}</button>
         </div>
         ${resume && it.duration ? `<div class="bar"><div style="width:${(it.position / it.duration) * 100}%"></div></div>` : ''}
-        ${nfoBlock(it.nfo, { people: true, cast: it.cast })}
+        ${nfoBlock(it.nfo, { people: true, cast: it.cast, itemId: it.id })}
         <dl class="tech">
           <dt>映像</dt><dd>${v ? esc(`${v.codec.toUpperCase()} ${v.profile} ${v.width}×${v.height}`) : '—'}</dd>
           <dt>音声</dt><dd>${it.audio.length ? it.audio.map((a) => esc(audioLabel(a))).join('<br>') : '—'}</dd>
@@ -775,7 +780,7 @@ const personHref = (name) => `#/person?name=${encodeURIComponent(name)}`;
 function personPhoto(p, lazy = true) {
   return `<div class="thumb person-thumb" style="--hue:${nameHue(p.name)}">
     <span class="person-initial" aria-hidden="true">${esc([...p.name.trim()][0] || '?')}</span>
-    ${p.thumb ? `<img class="person-img" ${lazy ? 'loading="lazy" ' : ''}src="/api/person/thumb?name=${encodeURIComponent(p.name)}" alt="" referrerpolicy="no-referrer" onerror="this.remove()">` : ''}
+    ${p.thumb ? `<img class="person-img" ${lazy ? 'loading="lazy" ' : ''}src="/api/person/thumb?name=${encodeURIComponent(p.name)}&v=${encodeURIComponent(p.thumb)}" alt="" referrerpolicy="no-referrer" onerror="this.remove()">` : ''}
   </div>`;
 }
 
@@ -783,7 +788,7 @@ function personCard(p) {
   return `<a class="card person" href="${personHref(p.name)}">
     ${personPhoto(p)}
     <div class="card-title" title="${esc([p.name, ...(p.aliases || [])].join('／'))}">${esc(p.name)}</div>
-    <div class="card-sub">${p.count} 作品${p.aliases?.length ? ` ・ 別名 ${p.aliases.length}` : ''}</div>
+    <div class="card-sub">${[`${p.count} 作品`, p.birthdate && ageLabel(p.birthdate, todayStr()), p.aliases?.length && `別名 ${p.aliases.length}`].filter(Boolean).join(' ・ ')}</div>
   </a>`;
 }
 
@@ -841,6 +846,10 @@ async function renderPerson(view, name) {
         <div class="muted">${d.items.length} 作品</div>
         <div class="aliases">${d.aliases.length ? `別名：${d.aliases.map((a) => esc(a)).join('、')}` : '<span class="muted">別名 なし</span>'}
           ${me.admin ? '<button class="btn small" id="edit-aliases">別名を編集</button><button class="btn small" id="merge-person">別の女優と統合</button>' : ''}</div>
+        ${me.admin ? `<div class="photo-actions">
+          <label class="btn small">写真を変更…<input type="file" id="photo-file" accept="image/jpeg,image/png,image/webp" hidden></label>
+          ${d.thumb ? '<button class="btn small" id="photo-clear">写真を削除</button>' : ''}
+        </div>` : ''}
         <form class="birth-form" id="alias-form" hidden>
           <input name="aliases" size="40" placeholder="別名（、または , で区切る）" aria-label="別名">
           <button class="btn small primary">保存</button>
@@ -870,6 +879,27 @@ async function renderPerson(view, name) {
     ].filter(Boolean).join(' ・ '))).join('')}</div>`;
 
   if (!me.admin) return;
+  // 写真の変更・削除（出演作のフォルダの .actors/名義.jpg を書き換える）
+  $('#photo-file', view).addEventListener('change', async (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+    toast('写真を保存しています…', 10000);
+    try {
+      const r = await fetch(`/api/person/photo?name=${encodeURIComponent(d.name)}`, { method: 'PUT', headers: { 'Content-Type': file.type || 'image/jpeg' }, body: file });
+      const j = await r.json().catch(() => ({}));
+      if (!r.ok) throw new Error(j.error || r.statusText);
+      toast(`写真を変更しました（${j.written} か所）`);
+      router();
+    } catch (err) { toast(`保存できませんでした: ${err.message}`, 6000); }
+  });
+  $('#photo-clear', view)?.addEventListener('click', async () => {
+    if (!confirm(`${d.name} の写真（各作品のフォルダの .actors の画像）を削除しますか？\n（NFO に画像の指定があれば、そちらが表示されます）`)) return;
+    try {
+      const j = await api(`/api/person/photo?name=${encodeURIComponent(d.name)}`, { method: 'DELETE' });
+      toast(`写真を削除しました（${j.removed} 件）`);
+      router();
+    } catch (err) { toast(err.message); }
+  });
   // 別名の編集: 入れた名義を同じ女優にまとめる（外した名義は別の女優に戻る）
   const aliasForm = $('#alias-form', view);
   $('#edit-aliases', view).onclick = () => {
