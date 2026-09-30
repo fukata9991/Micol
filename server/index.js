@@ -48,6 +48,17 @@ for (const k of Object.keys(progress.data)) {
 progress.save(true);
 const userProgress = (user) => (progress.data.users[user.id] ??= {});
 
+// お気に入り（ユーザー別）: { users: { [userId]: { items: { [itemId]: 登録時刻 }, people: { [女優名]: 登録時刻 } } } }
+const favorites = new JsonStore('favorites.json', { users: {} });
+const userFavorites = (user) => {
+  const f = (favorites.data.users[user.id] ??= {});
+  f.items ??= {};
+  f.people ??= {};
+  return f;
+};
+/** 女優がお気に入りか（別名のどれかで登録していればお気に入り） */
+const isFavoritePerson = (fav, p) => p.names.some((n) => fav.people[n]);
+
 const auth = new Auth();
 // 女優の情報（生年月日）: { [名前]: { birthdate: 'YYYY-MM-DD' } }
 const people = new JsonStore('people.json', {}, { pretty: true });
@@ -235,6 +246,8 @@ route('DELETE', '/api/users/:id', ({ params }) => {
   auth.deleteUser(params.id);
   delete progress.data.users[params.id];
   progress.save();
+  delete favorites.data.users[params.id];
+  favorites.save();
   return { ok: true };
 }, 'admin');
 
@@ -269,6 +282,43 @@ route('GET', '/api/history', ({ prog }) => {
       return { ...itemDto(it, prog), updated: p.updated || 0, folder: library.folders.get(it.folderId)?.name || '' };
     });
   return { items };
+});
+
+// ---------- お気に入り ----------
+
+// お気に入りの女優と動画（登録の新しい順）
+route('GET', '/api/favorites', ({ prog, user }) => {
+  const fav = userFavorites(user);
+  const newest = (o) => Object.entries(o).sort((a, b) => b[1] - a[1]).map(([k]) => k);
+  const items = newest(fav.items).filter((id) => library.items.has(id)).map((id) => itemDto(library.items.get(id), prog));
+  const seen = new Set();
+  const people = [];
+  for (const name of newest(fav.people)) {
+    const p = library.personOf(name);
+    if (!p || seen.has(p.name)) continue;
+    seen.add(p.name);
+    people.push(personDto(p));
+  }
+  return { items, people };
+});
+
+route('PUT', '/api/favorites/items/:id', ({ params, body, user }) => {
+  const it = getItem(params.id);
+  const fav = userFavorites(user);
+  if (body?.favorite) fav.items[it.id] = Date.now();
+  else delete fav.items[it.id];
+  favorites.save();
+  return { favorite: !!fav.items[it.id] };
+});
+
+// 女優は ?name= で渡す。外すときは別名で登録したものもまとめて外す
+route('PUT', '/api/favorites/person', ({ query, body, user }) => {
+  const p = getPerson(query.get('name'));
+  const fav = userFavorites(user);
+  if (body?.favorite) fav.people[p.name] = Date.now();
+  else for (const n of p.names) delete fav.people[n];
+  favorites.save();
+  return { favorite: isFavoritePerson(fav, p) };
 });
 
 // 履歴から削除（視聴位置・視聴済みの記録も消える）
@@ -306,7 +356,7 @@ route('GET', '/api/folders/:id/thumb', async ({ res, params, query }) => {
   media.sendImage(res, await cardImage(await media.itemThumb(it), query), 300);
 });
 
-route('GET', '/api/items/:id', async ({ params, prog }) => {
+route('GET', '/api/items/:id', async ({ params, prog, user }) => {
   const it = getItem(params.id);
   const probe = await library.ensureProbe(it).catch(() => it.probe);
   const folder = library.folders.get(it.folderId);
@@ -315,6 +365,7 @@ route('GET', '/api/items/:id', async ({ params, prog }) => {
   const sibling = (j) => (siblings[j] ? itemDto(library.items.get(siblings[j]), prog) : null);
   return {
     ...itemDto(it, prog),
+    favorite: !!userFavorites(user).items[it.id],
     path: it.path,
     container: it.ext.slice(1),
     nfo: it.nfo || null,
@@ -580,13 +631,14 @@ route('GET', '/api/people', ({ user }) => {
 });
 
 // 出演作品（発売日の新しい順、なければ名前順）。名前に / などを含められるよう ?name= で渡す
-route('GET', '/api/person', ({ query, prog }) => {
+route('GET', '/api/person', ({ query, prog, user }) => {
   const p = getPerson(query.get('name'));
+  const favorite = isFavoritePerson(userFavorites(user), p);
   const items = p.items
     .map((id) => library.items.get(id))
     .sort((a, b) => (b.nfo?.premiered || '').localeCompare(a.nfo?.premiered || '') || naturalCompare(a.name, b.name));
   // 作品ごとの名義（代表名と違う場合だけ）
-  return { ...personDto(p), items: items.map((it) => ({ ...itemDto(it, prog), credited: p.credits[it.id] !== p.name ? p.credits[it.id] : null })) };
+  return { ...personDto(p), favorite, items: items.map((it) => ({ ...itemDto(it, prog), credited: p.credits[it.id] !== p.name ? p.credits[it.id] : null })) };
 });
 
 // 別名の設定: { aliases: [...] } をこの女優の名義の組にする（入っていない名義は別の女優に戻る）

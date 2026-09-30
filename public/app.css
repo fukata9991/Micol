@@ -280,8 +280,19 @@ input[type=range].seek:hover::-webkit-slider-thumb { margin-top: -4px; }
 .folder-nfo { margin-bottom: 18px; }
 .folder-nfo .meta { margin-top: 0; }
 .detail h1 .ep { color: var(--accent); font-size: .75em; margin-right: 10px; vertical-align: middle; }
-.thumb-edit { margin-top: 10px; }
-.icon-btn { font-size: 16px; line-height: 1; padding: 6px 10px; }
+/* 詳細画面のサムネイル右上の編集ボタン */
+.thumb-edit-btn {
+  position: absolute; top: 10px; right: 10px; z-index: 2; width: 38px; height: 38px;
+  display: grid; place-items: center; padding: 0; border: 0; border-radius: 50%; cursor: pointer;
+  background: rgba(0,0,0,.55); color: #fff; backdrop-filter: blur(4px);
+}
+.thumb-edit-btn:hover { background: rgba(0,0,0,.8); }
+.thumb-edit-btn svg { width: 20px; height: 20px; }
+
+/* お気に入り */
+.fav-btn { display: inline-flex; align-items: center; gap: 6px; }
+.fav-btn svg { width: 18px; height: 18px; }
+.fav-btn.on svg { color: #ff5a79; }
 
 /* ---------- メタデータ編集 ---------- */
 .nfo-thumb { display: flex; align-items: end; gap: 12px; margin-bottom: 12px; }

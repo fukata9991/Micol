@@ -178,6 +178,9 @@ const NAV_ICON = {
   key: 'M12.65 10A5.99 5.99 0 007 6c-3.31 0-6 2.69-6 6s2.69 6 6 6a5.99 5.99 0 005.65-4H17v4h4v-4h2v-4H12.65zM7 14c-1.1 0-2-.9-2-2s.9-2 2-2 2 .9 2 2-.9 2-2 2z',
   logout: 'M17 7l-1.41 1.41L18.17 11H8v2h10.17l-2.58 2.58L17 17l5-5zM4 5h8V3H4c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h8v-2H4V5z',
   close: 'M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z',
+  heart: 'M12 21.35l-1.45-1.32C5.4 15.36 2 12.28 2 8.5 2 5.42 4.42 3 7.5 3c1.74 0 3.41.81 4.5 2.09C13.09 3.81 14.76 3 16.5 3 19.58 3 22 5.42 22 8.5c0 3.78-3.4 6.86-8.55 11.54L12 21.35z',
+  heartOutline: 'M16.5 3c-1.74 0-3.41.81-4.5 2.09C10.91 3.81 9.24 3 7.5 3 4.42 3 2 5.42 2 8.5c0 3.78 3.4 6.86 8.55 11.54L12 21.35l1.45-1.32C18.6 15.36 22 12.28 22 8.5 22 5.42 19.58 3 16.5 3zm-4.4 15.55l-.1.1-.1-.1C7.14 14.24 4 11.39 4 8.5 4 6.5 5.5 5 7.5 5c1.54 0 3.04.99 3.57 2.36h1.87C13.46 5.99 14.96 5 16.5 5c2 0 3.5 1.5 3.5 3.5 0 2.89-3.14 5.74-7.9 10.05z',
+  edit: 'M3 17.25V21h3.75L17.81 9.94l-3.75-3.75L3 17.25zM20.71 7.04a1 1 0 000-1.41l-2.34-2.34a1 1 0 00-1.41 0l-1.83 1.83 3.75 3.75 1.83-1.83z',
 };
 const navSvg = (name) => `<svg viewBox="0 0 24 24" width="24" height="24" fill="currentColor" aria-hidden="true"><path d="${NAV_ICON[name]}"/></svg>`;
 
@@ -214,6 +217,7 @@ function renderSidebar() {
     <div class="nav-group">
       ${navLink('#/', 'home', 'ホーム')}
       ${navLink('#/history', 'history', '履歴')}
+      ${navLink('#/favorites', 'heart', 'お気に入り')}
       ${navLink('#/people', 'person', '女優')}
     </div>
     <div class="nav-group nav-libs">
@@ -371,6 +375,7 @@ async function router() {
       case 'play': await renderPlayer(view, parts[1], params, seq); break;
       case 'search': await renderSearch(view, params.get('q') || ''); break;
       case 'history': await renderHistory(view); break;
+      case 'favorites': await renderFavorites(view); break;
       case 'people': await renderPeople(view); break;
       case 'person': await renderPerson(view, params.get('name') || ''); break;
       case 'aliases': await renderAliasSuggestions(view); break;
@@ -493,8 +498,9 @@ async function renderItem(view, id) {
     ${crumbs(it.breadcrumbs)}
     <div class="detail">
       <div>
-        <div class="detail-thumb">${thumbImg(thumbUrl(it), false)}</div>
-        ${me.admin ? '<button class="btn small icon-btn thumb-edit" id="edit-nfo" title="編集" aria-label="メタデータを編集">✎</button>' : ''}
+        <div class="detail-thumb">${thumbImg(thumbUrl(it), false)}
+          ${me.admin ? `<button class="thumb-edit-btn" id="edit-nfo" title="編集" aria-label="メタデータを編集">${navSvg('edit')}</button>` : ''}
+        </div>
       </div>
       <div>
         ${it.nfo?.showTitle ? `<div class="muted">${esc(it.nfo.showTitle)}</div>` : ''}
@@ -508,6 +514,7 @@ async function renderItem(view, id) {
             ? `<a class="btn primary" href="#/play/${id}">▶ 続きから (${fmtTime(it.position)})</a><a class="btn" href="#/play/${id}?t=0">最初から</a>`
             : `<a class="btn primary" href="#/play/${id}?t=0">▶ 再生</a>`}
           <button class="btn" id="toggle-watched">${it.watched ? '未視聴にする' : '視聴済みにする'}</button>
+          ${favButton(it.favorite)}
         </div>
         ${resume && it.duration ? `<div class="bar"><div style="width:${(it.position / it.duration) * 100}%"></div></div>` : ''}
         ${nfoBlock(it.nfo, { people: true, cast: it.cast, itemId: it.id })}
@@ -524,6 +531,7 @@ async function renderItem(view, id) {
     await api(`/api/items/${id}/watched`, { method: 'POST', body: { watched: !it.watched } });
     router();
   };
+  bindFavButton($('.fav-btn', view), `/api/favorites/items/${id}`);
   if (me.admin) $('#edit-nfo', view).onclick = async () => {
     if (await nfoEditor(it)) router();
   };
@@ -877,7 +885,7 @@ async function renderPeople(view) {
   if (!d.people.length) {
     view.innerHTML = `<h1 class="page-title">女優</h1>
       <div class="empty"><p>出演者が登録された動画がありません。</p>
-      <p class="muted">NFO の &lt;actor&gt; か、詳細画面の「メタデータを編集」の出演に名前を入れると、ここに表示されます。</p></div>`;
+      <p class="muted">NFO の &lt;actor&gt; か、詳細画面の ✎（メタデータの編集）の出演に名前を入れると、ここに表示されます。</p></div>`;
     return;
   }
   let sort = 'count';
@@ -957,7 +965,10 @@ async function renderPerson(view, name) {
           <button type="button" class="btn small" data-act="clear">削除</button>
           <button type="button" class="btn small" data-act="cancel">キャンセル</button>
         </form>
-        ${target ? `<div class="actions"><a class="btn primary" href="#/play/${target.id}">▶ ${target.position > 10 ? '続きを再生' : '再生'}</a></div>` : ''}
+        <div class="actions">
+          ${target ? `<a class="btn primary" href="#/play/${target.id}">▶ ${target.position > 10 ? '続きを再生' : '再生'}</a>` : ''}
+          ${favButton(d.favorite)}
+        </div>
       </div>
     </div>
     <div class="grid">${d.items.map((it) => itemCard(it, [
@@ -966,6 +977,7 @@ async function renderPerson(view, name) {
       ageLabel(d.birthdate, it.released) ? `当時 ${ageLabel(d.birthdate, it.released)}` : '',
     ].filter(Boolean).join(' ・ '))).join('')}</div>`;
 
+  bindFavButton($('.fav-btn', view), `/api/favorites/person?name=${encodeURIComponent(d.name)}`);
   if (!me.admin) return;
   // 写真の変更・削除（出演作のフォルダの .actors/名義.jpg を書き換える）
   $('#photo-file', view).addEventListener('change', async (e) => {
@@ -1151,6 +1163,39 @@ function historyRow(it) {
     </div>
     <button class="icon-btn" data-remove title="履歴から削除" aria-label="履歴から削除">${navSvg('close')}</button>
   </div>`;
+}
+
+// ---------- お気に入り ----------
+
+function favButton(on) {
+  return `<button class="btn fav-btn${on ? ' on' : ''}" aria-pressed="${on ? 'true' : 'false'}">${navSvg(on ? 'heart' : 'heartOutline')}<span>お気に入り</span></button>`;
+}
+
+/** お気に入りボタンを押したら登録・解除し、ボタンの表示だけ切り替える */
+function bindFavButton(btn, url) {
+  btn.onclick = async () => {
+    const on = !btn.classList.contains('on');
+    btn.disabled = true;
+    try {
+      const r = await api(url, { method: 'PUT', body: { favorite: on } });
+      btn.classList.toggle('on', r.favorite);
+      btn.setAttribute('aria-pressed', String(r.favorite));
+      btn.querySelector('path').setAttribute('d', NAV_ICON[r.favorite ? 'heart' : 'heartOutline']);
+      toast(r.favorite ? 'お気に入りに追加しました' : 'お気に入りから外しました');
+    } catch (e) {
+      toast(e.message);
+    }
+    btn.disabled = false;
+  };
+}
+
+async function renderFavorites(view) {
+  const d = await api('/api/favorites');
+  view.innerHTML = `<h1 class="page-title">お気に入り</h1>
+    ${d.people.length ? section('女優', `<div class="grid people-grid">${d.people.map(personCard).join('')}</div>`) : ''}
+    ${d.items.length ? section('動画', `<div class="grid">${d.items.map((it) => itemCard(it)).join('')}</div>`) : ''}
+    ${!d.people.length && !d.items.length ? `<div class="empty"><p>お気に入りはまだありません。</p>
+      <p class="muted">動画や女優のページの「お気に入り」ボタンで追加できます。</p></div>` : ''}`;
 }
 
 async function renderHistory(view) {
