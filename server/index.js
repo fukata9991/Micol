@@ -468,11 +468,14 @@ route('GET', '/api/items/:id/trickplay', async ({ params }) => {
   return info ? { ...info, v: Math.round(it.mtime) } : { pending: media.trickplayPending.has(it.id) };
 });
 
-route('GET', '/api/items/:id/trickplay/:n', async ({ res, params }) => {
+// ?w= で縮小版（スマホなど、プレビューを小さく出すときに軽くする）。?v= 付きなので長くキャッシュしてよい
+route('GET', '/api/items/:id/trickplay/:n', async ({ res, params, query }) => {
   const it = getItem(params.id);
   const info = await media.trickplay(it);
   if (!info) throw new HttpError(404, 'トリックプレイがありません');
-  media.sendImage(res, media.trickplaySheet(it, info, Number(params.n)), 86400);
+  const sheet = media.trickplaySheet(it, info, Number(params.n));
+  const w = Number(query.get('w'));
+  media.sendImage(res, w > 0 ? await media.smallImage(sheet, Math.min(4096, Math.max(320, w))) : sheet, query.has('v') ? 86400 * 30 : 86400);
 });
 
 route('GET', '/api/items/:id/playback', async ({ params, query }) => {

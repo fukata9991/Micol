@@ -1293,6 +1293,7 @@ const ICON = {
   next: '<svg viewBox="0 0 24 24"><path d="M6 18l8.5-6L6 6v12zM16 6v12h2V6h-2z"/></svg>',
   fs: '<svg viewBox="0 0 24 24"><path d="M7 14H5v5h5v-2H7v-3zm-2-4h2V7h3V5H5v5zm12 7h-3v2h5v-5h-2v3zM14 5v2h3v3h2V5h-5z"/></svg>',
   snap: '<svg viewBox="0 0 24 24"><path d="M12 15.2a3.2 3.2 0 100-6.4 3.2 3.2 0 000 6.4zM9 2L7.17 4H4a2 2 0 00-2 2v12a2 2 0 002 2h16a2 2 0 002-2V6a2 2 0 00-2-2h-3.17L15 2H9zm3 15a5 5 0 110-10 5 5 0 010 10z"/></svg>',
+  settings: `<svg viewBox="0 0 24 24"><path d="${NAV_ICON.settings}"/></svg>`,
 };
 
 function parseVtt(text) {
@@ -1323,6 +1324,7 @@ async function renderPlayer(view, id, params, seq) {
       <video playsinline preload="auto"></video>
       <div class="subs"></div>
       <div class="spinner"></div>
+      <div class="skip-flash" hidden></div>
       <div class="ctl ctl-top">
         <button class="pbtn" data-a="back" title="戻る">${ICON.back}</button>
         <div class="ptitle">${esc(it.name)}</div>
@@ -1345,15 +1347,20 @@ async function renderPlayer(view, id, params, seq) {
           <input type="range" class="vol" min="0" max="1" step="0.05" aria-label="音量">
           <span class="ptime">0:00 / 0:00</span>
           <span class="spacer"></span>
-          ${it.audio.length > 1 ? `<select class="psel" data-s="audio" title="音声">${it.audio.map((a) => `<option value="${a.index}">${esc(audioLabel(a))}</option>`).join('')}</select>` : ''}
-          <select class="psel" data-s="sub" title="字幕">
-            <option value="">字幕なし</option>
-            ${it.subtitles.map((s) => `<option value="${s.key}" ${s.supported ? '' : 'disabled'}>${esc(s.label)}${s.supported ? '' : '（非対応）'}</option>`).join('')}
-          </select>
-          <select class="psel" data-s="quality" title="再生方式">
-            <option value="auto">自動</option>
-            <option value="transcode">トランスコード</option>
-          </select>
+          <span class="psettings-wrap">
+            <button class="pbtn" data-a="settings" title="設定" aria-label="設定" aria-expanded="false">${ICON.settings}</button>
+            <div class="psettings" hidden>
+              ${it.audio.length > 1 ? `<label>音声<select class="psel" data-s="audio">${it.audio.map((a) => `<option value="${a.index}">${esc(audioLabel(a))}</option>`).join('')}</select></label>` : ''}
+              <label>字幕<select class="psel" data-s="sub">
+                <option value="">字幕なし</option>
+                ${it.subtitles.map((s) => `<option value="${s.key}" ${s.supported ? '' : 'disabled'}>${esc(s.label)}${s.supported ? '' : '（非対応）'}</option>`).join('')}
+              </select></label>
+              <label>再生方式<select class="psel" data-s="quality">
+                <option value="auto">自動</option>
+                <option value="transcode">トランスコード</option>
+              </select></label>
+            </div>
+          </span>
           <button class="pbtn" data-a="fs" title="全画面 (F)">${ICON.fs}</button>
         </div>
       </div>
@@ -1369,6 +1376,7 @@ async function renderPlayer(view, id, params, seq) {
   const volEl = $('.vol', player);
   const btn = (a) => $(`[data-a="${a}"]`, player);
   const sel = (s) => $(`[data-s="${s}"]`, player);
+  const settingsEl = $('.psettings', player);
 
   let mode = null;       // 再生方式
   let offset = 0;        // ffmpeg 配信時の開始位置（video.currentTime はここからの相対）
@@ -1498,7 +1506,7 @@ async function renderPlayer(view, id, params, seq) {
   function poke() {
     player.classList.remove('idle');
     clearTimeout(hideTimer);
-    hideTimer = setTimeout(() => { if (!video.paused) player.classList.add('idle'); }, 3000);
+    hideTimer = setTimeout(() => { if (!video.paused && settingsEl.hidden) player.classList.add('idle'); }, 3000);
   }
 
   const togglePlay = () => (video.paused ? video.play().catch(() => {}) : video.pause());
@@ -1553,8 +1561,50 @@ async function renderPlayer(view, id, params, seq) {
     }
   });
 
-  video.addEventListener('click', () => (player.classList.contains('idle') ? poke() : togglePlay()));
-  video.addEventListener('dblclick', toggleFullscreen);
+  // --- 画面のタップ・クリック ---
+  // マウス: クリックで再生/一時停止、ダブルクリックで全画面。
+  // タッチ: 左右の端（3 分の 1）をダブルタップで 10 秒戻る/進む（続けてタップすると重ねて移動）。
+  //         それ以外の 1 回タップは、操作ボタンが隠れていれば表示、表示中なら再生/一時停止
+  const skipFlash = $('.skip-flash', player);
+  let touchAt = 0;
+  let tapTimer = null;
+  let lastTap = { at: 0, side: 0 };
+  let flash = { side: 0, at: 0, total: 0 };
+  let flashTimer;
+  const singleTap = () => (player.classList.contains('idle') ? poke() : togglePlay());
+  function tapSkip(side) {
+    const now = Date.now();
+    flash = flash.side === side && now - flash.at < 800 ? { side, at: now, total: flash.total + 10 } : { side, at: now, total: 10 };
+    seek(current() + side * 10);
+    skipFlash.className = `skip-flash ${side < 0 ? 'left' : 'right'}`;
+    skipFlash.innerHTML = `${side < 0 ? ICON.rew : ICON.fwd}<span>${flash.total}秒</span>`;
+    skipFlash.hidden = false;
+    clearTimeout(flashTimer);
+    flashTimer = setTimeout(() => { skipFlash.hidden = true; }, 800);
+  }
+  video.addEventListener('touchstart', () => { touchAt = Date.now(); }, { passive: true });
+  video.addEventListener('click', (e) => {
+    if (!settingsEl.hidden) return; // 設定を開いているときは閉じるだけ（document の click で閉じる）
+    if (Date.now() - touchAt > 800) return singleTap();
+    const r = video.getBoundingClientRect();
+    const x = (e.clientX - r.left) / r.width;
+    const side = x < 1 / 3 ? -1 : x > 2 / 3 ? 1 : 0;
+    const now = Date.now();
+    const double = side && side === lastTap.side && now - lastTap.at < 350;
+    const chained = side && side === flash.side && now - flash.at < 800;
+    lastTap = { at: now, side };
+    clearTimeout(tapTimer);
+    if (double || chained) {
+      tapTimer = null;
+      tapSkip(side);
+    } else if (side) {
+      // ダブルタップかどうか分かるまで少し待つ
+      tapTimer = setTimeout(singleTap, 300);
+    } else {
+      singleTap();
+    }
+  });
+  video.addEventListener('dblclick', () => { if (Date.now() - touchAt > 800) toggleFullscreen(); });
   player.addEventListener('mousemove', poke);
   player.addEventListener('touchstart', poke, { passive: true });
 
@@ -1565,6 +1615,16 @@ async function renderPlayer(view, id, params, seq) {
   });
   btn('back').onclick = goBack;
   btn('fs').onclick = toggleFullscreen;
+  // 設定（音声・字幕・再生方式）はボタンで開くパネルにまとめる
+  const setSettings = (open) => {
+    settingsEl.hidden = !open;
+    btn('settings').setAttribute('aria-expanded', String(open));
+    poke();
+  };
+  btn('settings').onclick = (e) => { e.stopPropagation(); setSettings(settingsEl.hidden); };
+  const onDocClick = (e) => { if (!settingsEl.hidden && !e.target.closest('.psettings-wrap')) setSettings(false); };
+  document.addEventListener('click', onDocClick);
+  settingsEl.addEventListener('change', () => poke());
   if (me.admin) btn('snap').onclick = async () => {
     try {
       await api(`/api/items/${id}/thumb`, { method: 'PUT', body: { t: current() } });
@@ -1589,10 +1649,33 @@ async function renderPlayer(view, id, params, seq) {
     try {
       const d = await api(`/api/items/${id}/trickplay`);
       if (!alive) return;
-      if (d.sheets) trick = d;
+      if (d.sheets) {
+        trick = d;
+        preloadTrick();
+      }
       // 生成中なら少し待ってから確認し直す
       else if (d.pending) trickRetry = setTimeout(loadTrick, 20000);
     } catch {}
+  }
+  // プレビューの幅: 画面幅に合わせて縮小（最大はタイルの実寸）
+  const trickWidth = () => Math.min(trick.width, Math.round(player.clientWidth * 0.4));
+  // プレビューを半分以下の大きさで出す画面（スマホなど）では、縮小版のシートを使って読み込みを軽くする
+  let trickSmall = false;
+  const sheetUrl = (n) => `/api/items/${id}/trickplay/${n}?v=${trick.v}${trickSmall ? `&w=${Math.round((trick.width * trick.cols) / 2)}` : ''}`;
+  // シークバーを触る前に、今の位置に近いシートから順に読み込んでおく（ブラウザのキャッシュに入る）
+  async function preloadTrick() {
+    trickSmall = trickWidth() <= trick.width / 2;
+    const per = trick.cols * trick.rows;
+    const here = Math.floor(current() / trick.interval / per);
+    const order = [...Array(trick.sheets).keys()].sort((a, b) => Math.abs(a - here) - Math.abs(b - here));
+    for (const n of order) {
+      if (!alive) return;
+      await new Promise((done) => {
+        const img = new Image();
+        img.onload = img.onerror = done;
+        img.src = sheetUrl(n);
+      });
+    }
   }
   function showTrick(t) {
     const d = duration();
@@ -1601,13 +1684,12 @@ async function renderPlayer(view, id, params, seq) {
     const per = trick.cols * trick.rows;
     const sheet = Math.floor(i / per);
     const k = i % per;
-    // 画面幅に合わせて縮小（最大はタイルの実寸）
-    const w = Math.min(trick.width, Math.round(player.clientWidth * 0.4));
+    const w = trickWidth();
     const scale = w / trick.width;
     const h = Math.round(trick.height * scale);
     trickImg.style.width = `${w}px`;
     trickImg.style.height = `${h}px`;
-    trickImg.style.backgroundImage = `url("/api/items/${id}/trickplay/${sheet}?v=${trick.v}")`;
+    trickImg.style.backgroundImage = `url("${sheetUrl(sheet)}")`;
     trickImg.style.backgroundSize = `${trick.width * trick.cols * scale}px ${trick.height * trick.rows * scale}px`;
     trickImg.style.backgroundPosition = `${-(k % trick.cols) * w}px ${-Math.floor(k / trick.cols) * h}px`;
     $('.trick-time', trickEl).textContent = fmtTime(t);
@@ -1667,7 +1749,10 @@ async function renderPlayer(view, id, params, seq) {
     clearTimeout(hideTimer);
     clearTimeout(seekTimer);
     clearTimeout(trickRetry);
+    clearTimeout(tapTimer);
+    clearTimeout(flashTimer);
     document.removeEventListener('keydown', onKey);
+    document.removeEventListener('click', onDocClick);
     window.removeEventListener('beforeunload', onUnload);
     video.pause();
     video.removeAttribute('src');

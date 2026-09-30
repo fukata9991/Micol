@@ -245,6 +245,28 @@ body.playing main { padding: 0; max-width: none; }
   background: rgba(0,0,0,.5); color: #fff; font-size: 13px;
 }
 .psel option { background: #1a1c21; }
+/* 設定パネル（音声・字幕・再生方式） */
+.psettings-wrap { position: relative; }
+.psettings {
+  position: absolute; right: 0; bottom: calc(100% + 8px); z-index: 3;
+  display: flex; flex-direction: column; gap: 12px; width: 260px; max-width: calc(100vw - 24px);
+  padding: 14px; border-radius: 10px; background: rgba(20,22,26,.96); border: 1px solid rgba(255,255,255,.12);
+  box-shadow: 0 8px 24px rgba(0,0,0,.5);
+}
+.psettings[hidden] { display: none; }
+.psettings label { display: flex; flex-direction: column; gap: 5px; font-size: 12px; color: rgba(255,255,255,.7); }
+.psettings .psel { width: 100%; max-width: none; }
+/* 画面の左右をダブルタップしたときの表示（10 秒戻る/進む） */
+.player video { touch-action: manipulation; }
+.skip-flash {
+  position: absolute; top: 50%; transform: translateY(-50%); pointer-events: none;
+  display: flex; flex-direction: column; align-items: center; gap: 4px; padding: 18px 22px; border-radius: 999px;
+  background: rgba(0,0,0,.45); font-size: 14px; font-weight: 600; font-variant-numeric: tabular-nums;
+}
+.skip-flash[hidden] { display: none; }
+.skip-flash.left { left: 12%; }
+.skip-flash.right { right: 12%; }
+.skip-flash svg { width: 32px; height: 32px; fill: currentColor; }
 
 input[type=range].seek, input[type=range].vol {
   -webkit-appearance: none; appearance: none; background: transparent; cursor: pointer; margin: 0;
@@ -274,7 +296,6 @@ input[type=range].seek:hover::-webkit-slider-thumb { margin-top: -4px; }
   .logo { font-size: 17px; }
   .grid { gap: 16px 12px; }
   .vol, .hide-sm { display: none; }
-  .psel { max-width: 110px; }
 }
 
 /* ---------- NFO ---------- */
@@ -502,12 +523,11 @@ button.avatar:hover, button.avatar[aria-expanded="true"] { box-shadow: 0 0 0 3px
   .lib-list li { flex-wrap: wrap; row-gap: 8px; }
   .lib-list .info { flex-basis: 100%; }
 
-  /* プレーヤー: 音声・字幕などの選択欄は幅を分け合い、文字が切れにくいようにする */
-  .ctl-row .spacer { flex-basis: 100%; height: 0; }
-  .psel { max-width: none; flex: 1 1 0; min-width: 0; }
-  .psel[data-s="audio"] { flex-grow: 1.6; }
-  .skip-group { gap: 0; }
-  .pbtn.skip { padding: 0 5px; }
+  /* プレーヤー: スキップは画面の左右をダブルタップで行うので、ボタンは出さない */
+  .skip-group { display: none; }
+  .ctl-bottom { padding-left: 10px; padding-right: 10px; }
+  .ctl-row { flex-wrap: nowrap; gap: 2px; }
+  .ptime { margin: 0 4px; font-size: 13px; }
 }
 
 /* ---------- 女優 ---------- */
