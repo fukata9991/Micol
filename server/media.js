@@ -1,11 +1,13 @@
 import fs from 'node:fs';
 import os from 'node:os';
+import crypto from 'node:crypto';
 import path from 'node:path';
 import { spawn, execFile } from 'node:child_process';
 import { CACHE_DIR, HttpError } from './store.js';
 import { SIDE_DIRS } from './library.js';
 
 const THUMB_DIR = path.join(CACHE_DIR, 'thumbs');
+const SMALL_DIR = path.join(CACHE_DIR, 'thumbs-small'); // 一覧のカード用に縮小した画像
 const SUB_DIR = path.join(CACHE_DIR, 'subs');
 const UPLOAD_DIR = path.join(CACHE_DIR, 'uploads');
 fs.mkdirSync(UPLOAD_DIR, { recursive: true });
@@ -31,6 +33,7 @@ export class Media {
     this.subJobs = new Map();
     this.encoders = ['libx264'];
     this.trickplayInfos = new Map(); // トリックプレイのフォルダ -> 情報
+    this.smallJobs = new Map();
     this.trickplayQueue = [];
     this.trickplayPending = new Set();
     this.trickplayFailed = new Set();
@@ -435,6 +438,51 @@ export class Media {
     console.log(`トリックプレイを生成しました (${Math.round((Date.now() - started) / 1000)}秒): ${item.path}`);
   }
 
+  /**
+   * 一覧のカード用に縮小した画像（幅 width px まで）。小さい画像はそのまま返す。
+   * 元の画像のパスと更新日時で保存し、元が変わったら作り直す。作れなかった場合は元の画像を返す
+   */
+  async smallImage(file, width = 480) {
+    let st;
+    try {
+      st = fs.statSync(file);
+    } catch {
+      return file;
+    }
+    if (st.size <= 60 * 1024) return file;
+    const key = crypto.createHash('sha1').update(`${file}|${Math.round(st.mtimeMs)}|${width}`).digest('hex').slice(0, 24);
+    const out = path.join(SMALL_DIR, `${key}.jpg`);
+    if (fs.existsSync(out)) return out;
+    if (this.smallJobs.has(out)) return this.smallJobs.get(out);
+    const job = this.withThumbSlot(async () => {
+      fs.mkdirSync(SMALL_DIR, { recursive: true });
+      const tmp = `${out}.tmp.jpg`;
+      try {
+        await this.run(this.ffmpeg, [
+          '-hide_banner', '-loglevel', 'error', '-y', '-i', file,
+          '-vf', `scale='min(${width},iw)':-2`, '-q:v', '4', '-frames:v', '1', '-update', '1', tmp,
+        ], 30000);
+        fs.renameSync(tmp, out);
+        return out;
+      } catch {
+        fs.rmSync(tmp, { force: true });
+        return file;
+      }
+    }).finally(() => this.smallJobs.delete(out));
+    this.smallJobs.set(out, job);
+    return job;
+  }
+
+  /** 縮小版を 1 枚ずつ作る（ほかの処理の邪魔をしないよう、1 枚ごとに少し間をあける） */
+  async warmSmallImages(files) {
+    const started = Date.now();
+    let small = 0;
+    for (const f of new Set(files)) {
+      if ((await this.smallImage(f).catch(() => f)) !== f) small++;
+      await new Promise((r) => setTimeout(r, 50));
+    }
+    console.log(`一覧用の縮小画像: ${small} 枚（${Math.round((Date.now() - started) / 1000)} 秒）`);
+  }
   sendImage(res, file, maxAge = 3600) {
     const type = IMAGE_MIME[path.extname(file).toLowerCase()] || 'image/jpeg';
     res.writeHead(200, { 'Content-Type': type, 'Cache-Control': `max-age=${maxAge}` });

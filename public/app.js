@@ -81,6 +81,8 @@ function thumbImg(src, lazy = true) {
 }
 
 const thumbUrl = (it) => `/api/items/${it.id}/thumb?v=${it.thumb}`;
+// 一覧のカード用（縮小版）。詳細画面は元の画像（thumbUrl）
+const cardThumbUrl = (it) => `${thumbUrl(it)}&w=480`;
 
 /** サムネイル枠の縦横比（ライブラリでいちばん多い動画の比率）。次回の表示用に覚えておく */
 function setThumbRatio(r) {
@@ -100,7 +102,7 @@ function itemCard(it, sub = '') {
   sub = sub || [episodeLabel(it), it.year].filter(Boolean).join(' ・ ');
   return `<a class="card" href="#/item/${it.id}">
     <div class="thumb">
-      ${thumbImg(thumbUrl(it))}
+      ${thumbImg(cardThumbUrl(it))}
       ${it.watched ? '<span class="badge" title="視聴済み">✓</span>' : ''}
       ${it.duration ? `<span class="dur">${fmtTime(it.duration)}</span>` : ''}
       <button class="play-overlay" data-play="${it.id}" title="再生" aria-label="再生">▶</button>
@@ -114,7 +116,7 @@ function itemCard(it, sub = '') {
 function folderCard(f) {
   return `<a class="card folder" href="#/folder/${f.id}">
     <div class="thumb">
-      ${thumbImg(`/api/folders/${f.id}/thumb`)}
+      ${thumbImg(`/api/folders/${f.id}/thumb?w=480`)}
       <span class="badge count">${f.count}</span>
     </div>
     <div class="card-title" title="${esc(f.name)}">${esc(f.name)}</div>
@@ -1015,7 +1017,7 @@ function historyRow(it) {
   const time = new Date(it.updated).toLocaleTimeString('ja-JP', { hour: '2-digit', minute: '2-digit' });
   return `<div class="hist-row" data-id="${it.id}">
     <a class="thumb" href="#/item/${it.id}">
-      ${thumbImg(thumbUrl(it))}
+      ${thumbImg(cardThumbUrl(it))}
       ${it.watched ? '<span class="badge" title="視聴済み">✓</span>' : ''}
       ${it.duration ? `<span class="dur">${fmtTime(it.duration)}</span>` : ''}
       <button class="play-overlay" data-play="${it.id}" title="再生" aria-label="再生">▶</button>

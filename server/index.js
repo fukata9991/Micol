@@ -109,16 +109,21 @@ function importSuggestions() {
 }
 
 /** 確認待ちの候補: 1 か所だけの情報源で、まだ同じ女優になっておらず「違う」ともしていない組（ライブラリにいる名義を含むもの） */
-function pendingSuggestions() {
+function pendingSuggestions(aliasIndex = library.people().aliasIndex) {
   const rejected = new Set(aliases.data.rejected);
-  const map = library.people();
   return readSuggestions().filter(
-    (p) => !rejected.has(pairKey(...p.names)) && !sameGroup(...p.names) && p.names.some((n) => map.aliasIndex.has(n)),
+    (p) => !rejected.has(pairKey(...p.names)) && !sameGroup(...p.names) && p.names.some((n) => aliasIndex.has(n)),
   );
 }
 
 library.aliasGroups = aliases.data.groups;
 importSuggestions();
+
+/** 確認待ちの候補のうち、どちらの名義にも作品がある組の数（女優の集計は 1 回だけ） */
+function countBothSuggestions() {
+  const index = library.people().aliasIndex;
+  return pendingSuggestions(index).filter((s) => s.names.every((n) => index.has(n))).length;
+}
 
 // 画面で設定した値（people.json）を優先し、なければ NFO の <actor><birthdate> を使う。別名義の値も使う
 function birthdateOf(name, person) {
@@ -310,12 +315,15 @@ route('GET', '/api/folders/:id', ({ params, prog }) => {
   };
 });
 
-route('GET', '/api/folders/:id/thumb', async ({ res, params }) => {
+// ?w=480 などを付けると、一覧のカード用に縮小した画像を返す
+const cardImage = (file, query) => (query.has('w') ? media.smallImage(file, Math.min(1280, Math.max(160, Number(query.get('w')) || 480))) : file);
+
+route('GET', '/api/folders/:id/thumb', async ({ res, params, query }) => {
   const f = getFolder(params.id);
-  if (f.poster) return media.sendImage(res, f.poster, 300);
+  if (f.poster) return media.sendImage(res, await cardImage(f.poster, query), 300);
   const it = library.firstItem(f);
   if (!it) throw new HttpError(404, 'サムネイルなし');
-  media.sendImage(res, await media.itemThumb(it), 300);
+  media.sendImage(res, await cardImage(await media.itemThumb(it), query), 300);
 });
 
 route('GET', '/api/items/:id', async ({ params, prog }) => {
@@ -345,7 +353,7 @@ route('GET', '/api/items/:id', async ({ params, prog }) => {
 
 route('GET', '/api/items/:id/thumb', async ({ res, params, query }) => {
   // ?v= 付きの URL はサムネイルが変わると URL も変わるので長くキャッシュしてよい
-  media.sendImage(res, await media.itemThumb(getItem(params.id)), query.has('v') ? 86400 * 30 : 60);
+  media.sendImage(res, await cardImage(await media.itemThumb(getItem(params.id)), query), query.has('v') ? 86400 * 30 : 60);
 });
 
 route('GET', '/api/items/:id/frame', ({ res, params, query }) => {
@@ -481,7 +489,7 @@ route('GET', '/api/people', ({ user }) => {
   return {
     people: [...library.people().values()].map(personDto),
     // 案内するのは、どちらの名義にも作品がある（まとめると 2 人が 1 人になる）組の数
-    suggestions: user?.admin ? pendingSuggestions().filter((s) => s.names.every((n) => library.people().aliasIndex.has(n))).length : 0,
+    suggestions: user?.admin ? countBothSuggestions() : 0,
   };
 });
 
@@ -860,4 +868,5 @@ process.on('SIGINT', shutdown);
 process.on('SIGTERM', shutdown);
 
 media.detectEncoders().then((encs) => console.log(`利用可能なエンコーダー: ${encs.join(', ')}`));
-library.scanAll();
+// 起動時のスキャンのあと、一覧のカード用の縮小版を順に作っておく（初めて開いた一覧でも軽いように）
+library.scanAll().then(() => media.warmSmallImages([...[...library.folders.values()].map((f) => f.poster), ...[...library.items.values()].map((it) => it.image)].filter(Boolean)));
