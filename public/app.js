@@ -109,8 +109,8 @@ function nfoBlock(nfo, { people = false, cast = [], itemId = null } = {}) {
   const photo = Object.fromEntries(cast.map((c) => [c.name, c.thumb]));
   if (!nfo) return '';
   const meta = [
-    nfo.year,
-    nfo.premiered && nfo.premiered !== String(nfo.year) ? `発売日 ${nfo.premiered}` : null,
+    // 発売日があればそれだけ（年は発売日から分かる）。発売日が無いときだけ年を出す
+    nfo.premiered ? `発売日 ${nfo.premiered}` : nfo.year,
     nfo.rating != null ? `★ ${nfo.rating}` : null,
     nfo.mpaa,
     ...(nfo.genres || []),
@@ -550,7 +550,6 @@ function nfoEditor(it) {
         <div class="form-row">${text('title', 'タイトル', n.title ?? it.name, 'grow')}</div>
         <div class="form-row">${text('originalTitle', '原題', n.originalTitle, 'grow')}${text('sortTitle', '並べ替え用タイトル', n.sortTitle, 'grow')}</div>
         <div class="form-row">
-          ${text('year', '年', n.year, 'inputmode="numeric" size="6"')}
           ${text('premiered', '発売日', n.premiered, 'size="12" placeholder="2019/05/25"')}
           ${text('season', 'シーズン', n.season, 'inputmode="numeric" size="5"')}
           ${text('episode', '話数', n.episode, 'inputmode="numeric" size="5"')}
@@ -584,7 +583,10 @@ function nfoEditor(it) {
       e.preventDefault();
       const f = new FormData(form);
       const body = {};
-      for (const k of ['title', 'originalTitle', 'sortTitle', 'year', 'premiered', 'season', 'episode', 'rating', 'mpaa', 'tagline', 'plot']) body[k] = f.get(k);
+      for (const k of ['title', 'originalTitle', 'sortTitle', 'premiered', 'season', 'episode', 'rating', 'mpaa', 'tagline', 'plot']) body[k] = f.get(k);
+      // 年は発売日の年にそろえる（発売日が無ければ今の年のまま）
+      const d = normalizeDate(String(body.premiered || ''));
+      body.year = d ? d.slice(0, 4) : n.year ?? '';
       for (const k of ['genres', 'tags', 'studios', 'directors', 'actors']) body[k] = String(f.get(k)).split(/[,、，]/).map((s) => s.trim()).filter(Boolean);
       form.querySelectorAll('button, input, textarea').forEach((b) => { b.disabled = true; });
       try {
@@ -596,14 +598,13 @@ function nfoEditor(it) {
         form.querySelectorAll('button, input, textarea').forEach((b) => { b.disabled = false; });
       }
     });
-    // 発売日: 入力欄を離れたら 2019-05-25 の形に整え、年が空なら発売日の年を入れる
+    // 発売日: 入力欄を離れたら 2019-05-25 の形に整える
     const released = form.premiered;
     released.addEventListener('blur', () => {
       const d = normalizeDate(released.value);
       released.setCustomValidity(d === null ? '日付として読み取れません（例: 2019/05/25）' : '');
       if (d === null) return released.reportValidity();
       released.value = d;
-      if (d && !form.year.value.trim()) form.year.value = d.slice(0, 4);
     });
     released.addEventListener('input', () => released.setCustomValidity(''));
     $('input[name="title"]', modal).focus();
