@@ -17,6 +17,8 @@ const FOLDER_IMAGES = ['poster', 'folder', 'cover', 'thumb'];
 const ITEM_IMAGE_SUFFIXES = ['-landscape', '', '-thumb', '-poster', '-fanart'];
 // 動画フォルダ内の付属ファイル用フォルダ: .thumbs/動画名.jpg, .nfo/動画名.nfo, .trickplay/動画名.trickplay/
 export const SIDE_DIRS = { thumbs: '.thumbs', nfo: '.nfo', trickplay: '.trickplay' };
+// フォルダの画像を配下の作品から選んだときの保存先: .thumbs/.folder.jpg（poster.jpg などより優先）
+export const FOLDER_THUMB = '.folder.jpg';
 const SKIP_DIRS = new Set(['$recycle.bin', 'system volume information', '@eadir', '.trash']);
 
 export const hashId = (s) => crypto.createHash('sha1').update(s.toLowerCase()).digest('hex').slice(0, 16);
@@ -94,12 +96,16 @@ export class Library {
     const files = new Map(entries.filter((e) => e.isFile()).map((e) => [e.name.toLowerCase(), e.name]));
     const dirs = new Map(entries.filter((e) => e.isDirectory()).map((e) => [e.name.toLowerCase(), e.name]));
     const side = await readSideDirs(dir, dirs);
-    folder.poster = findImage(dir, files, FOLDER_IMAGES);
+    const custom = side.thumbs.files.get(FOLDER_THUMB);
+    folder.customPoster = !!custom;
+    folder.poster = custom ? path.join(side.thumbs.dir, custom) : findImage(dir, files, FOLDER_IMAGES);
     for (const n of ['tvshow.nfo', 'season.nfo']) {
       const f = sideOrLocal(dir, n, side.nfo, files);
       if (f && (folder.nfo = await readNfo(f, dir))) break;
     }
     if (!folder.poster && folder.nfo?.thumb) folder.poster = folder.nfo.thumb;
+    // 画像の版（変えたら URL が変わり、ブラウザのキャッシュを使わない）
+    folder.posterV = folder.poster ? Math.round((await fs.stat(folder.poster).catch(() => null))?.mtimeMs || 0) : 0;
     if (parentId && folder.nfo?.title) folder.name = folder.nfo.title;
 
     const subdirs = [];

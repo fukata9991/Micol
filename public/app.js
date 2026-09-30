@@ -96,7 +96,7 @@ function itemCard(it, sub = '') {
 function folderCard(f) {
   return `<a class="card folder" href="#/folder/${f.id}">
     <div class="thumb">
-      ${thumbImg(`/api/folders/${f.id}/thumb?w=480`)}
+      ${thumbImg(`/api/folders/${f.id}/thumb?w=480&v=${f.thumb || 0}`)}
       <span class="badge count">${f.count}</span>
     </div>
     <div class="card-title" title="${esc(f.name)}">${esc(f.name)}</div>
@@ -536,7 +536,10 @@ async function renderFolder(view, id, seq) {
   if (seq === routeSeq) markNav(`#/folder/${d.breadcrumbs[0]?.id}`);
   view.innerHTML = `
     ${crumbs(d.breadcrumbs.slice(0, -1))}
-    <h1 class="page-title">${esc(d.folder.name)}</h1>
+    <div class="folder-head">
+      <h1 class="page-title">${esc(d.folder.name)}</h1>
+      ${me.admin && (items.length || d.folders.length) ? `<button class="btn small folder-thumb-btn" id="edit-folder-thumb" title="フォルダの画像を変更">${navSvg('edit')}<span>画像を変更</span></button>` : ''}
+    </div>
     ${d.folder.nfo ? `<div class="folder-nfo">${nfoBlock(d.folder.nfo)}</div>` : ''}
     <div class="toolbar">
       <span class="muted">${[d.folders.length && `${d.folders.length} フォルダ`, items.length && `${items.length} 本`].filter(Boolean).join(' ・ ')}</span>
@@ -546,6 +549,74 @@ async function renderFolder(view, id, seq) {
     ${items.length ? `<div class="grid">${items.map((it) => itemCard(it)).join('')}</div>` : ''}
     ${!d.folders.length && !items.length ? `<div class="empty">${d.scanning ? 'スキャン中…' : 'メディアがありません'}</div>` : ''}`;
   refreshWhileScanning(d.scanning && !d.folders.length && !items.length, seq);
+  $('#edit-folder-thumb', view)?.addEventListener('click', async () => {
+    if (await folderThumbEditor(d.folder)) {
+      await loadLibraries(); // サイドバー・ホームのライブラリの画像も新しくする
+      router();
+    }
+  });
+}
+
+/** フォルダの画像を、配下の作品のサムネイルから選ぶダイアログ。変更したら true を返す */
+function folderThumbEditor(folder) {
+  return new Promise((resolve) => {
+    const modal = document.createElement('div');
+    modal.className = 'modal';
+    modal.innerHTML = `<div class="modal-box wide folder-thumb-box" role="dialog" aria-label="フォルダの画像を変更">
+      <h3>${esc(folder.name)} の画像</h3>
+      <div class="folder-thumb-top">
+        <div class="nfo-thumb-img">${thumbImg(`/api/folders/${folder.id}/thumb?w=480&v=${folder.thumb || 0}`, false)}</div>
+        <p class="hint">下の一覧から、このフォルダの画像にする作品を選んでください。${folder.customThumb ? '' : '<br>（今は自動で選んだ画像です）'}</p>
+      </div>
+      <input type="search" class="people-filter folder-thumb-filter" placeholder="作品名で絞り込み" aria-label="作品名で絞り込み">
+      <div class="folder-thumb-list"><p class="muted">読み込み中…</p></div>
+      <div class="modal-actions">
+        ${folder.customThumb ? '<button class="btn danger" data-act="reset">自動に戻す</button>' : ''}
+        <span class="spacer"></span>
+        <button class="btn" data-act="cancel">キャンセル</button>
+      </div>
+    </div>`;
+    document.body.append(modal);
+    const list = $('.folder-thumb-list', modal);
+    const filter = $('.folder-thumb-filter', modal);
+    let items = [];
+    const close = (changed) => {
+      modal.remove();
+      resolve(changed);
+    };
+    function draw() {
+      const q = filter.value.trim().normalize('NFKC').toLowerCase();
+      const shown = items.filter((it) => !q || it.name.normalize('NFKC').toLowerCase().includes(q)).slice(0, 300);
+      list.innerHTML = shown.length
+        ? shown.map((it) => `<button class="folder-thumb-pick" data-id="${it.id}" title="${esc(it.name)}">
+            <span class="thumb">${thumbImg(cardThumbUrl(it))}</span><span class="pick-name">${esc(it.name)}</span></button>`).join('')
+        : '<p class="muted">見つかりませんでした</p>';
+    }
+    api(`/api/folders/${folder.id}/thumb-candidates`).then((d) => {
+      items = d.items;
+      draw();
+    }).catch((e) => { list.innerHTML = `<p class="muted">${esc(e.message)}</p>`; });
+    filter.addEventListener('input', draw);
+    const busy = (on) => modal.querySelectorAll('button, input').forEach((b) => { b.disabled = on; });
+    modal.addEventListener('click', async (e) => {
+      if (e.target === modal) return close(false);
+      const act = e.target.closest('[data-act]')?.dataset.act;
+      if (act === 'cancel') return close(false);
+      const pick = e.target.closest('.folder-thumb-pick');
+      if (!pick && act !== 'reset') return;
+      if (act === 'reset' && !confirm('選んだ画像を削除して、自動で選ぶ画像に戻しますか？')) return;
+      busy(true);
+      try {
+        if (pick) await api(`/api/folders/${folder.id}/thumb`, { method: 'PUT', body: { item: pick.dataset.id } });
+        else await api(`/api/folders/${folder.id}/thumb`, { method: 'DELETE' });
+        toast(pick ? 'フォルダの画像を変更しました' : '自動の画像に戻しました');
+        close(true);
+      } catch (err) {
+        toast(`変更できませんでした: ${err.message}`, 6000);
+        busy(false);
+      }
+    });
+  });
 }
 
 // ---------- 詳細 ----------

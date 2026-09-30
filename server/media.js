@@ -4,7 +4,7 @@ import crypto from 'node:crypto';
 import path from 'node:path';
 import { spawn, execFile } from 'node:child_process';
 import { CACHE_DIR, HttpError } from './store.js';
-import { SIDE_DIRS } from './library.js';
+import { SIDE_DIRS, FOLDER_THUMB } from './library.js';
 
 const THUMB_DIR = path.join(CACHE_DIR, 'thumbs');
 const SMALL_DIR = path.join(CACHE_DIR, 'thumbs-small'); // 一覧のカード用に縮小した画像
@@ -270,6 +270,36 @@ export class Media {
   }
 
   /** 動画フォルダの .thumbs/動画名.jpg に保存する（既にあれば上書き） */
+  /** フォルダの画像を、配下の作品のサムネイル（画像ファイル）から作る: .thumbs/.folder.jpg */
+  async setFolderThumb(folder, image) {
+    const dir = path.join(folder.path, SIDE_DIRS.thumbs);
+    const out = path.join(dir, FOLDER_THUMB);
+    const tmp = path.join(dir, `.folder.${process.pid}.tmp.jpg`);
+    try {
+      fs.mkdirSync(dir, { recursive: true });
+    } catch (e) {
+      throw new HttpError(500, `フォルダを作成できません: ${dir} (${e.message})`);
+    }
+    try {
+      await this.run(this.ffmpeg, ['-hide_banner', '-loglevel', 'error', '-y', '-i', image, '-vf', "scale='min(1280,iw)':-2", '-q:v', '3', '-frames:v', '1', '-update', '1', tmp], 30000);
+      fs.renameSync(tmp, out);
+    } catch (e) {
+      fs.rmSync(tmp, { force: true });
+      throw new HttpError(500, `画像を作成できませんでした: ${e.message}`);
+    }
+    folder.poster = out;
+    folder.customPoster = true;
+    folder.posterV = Date.now();
+  }
+
+  /** 選んだフォルダの画像を消す（poster.jpg などがあればそれ、無ければ最初の作品のサムネイルに戻る） */
+  clearFolderThumb(folder) {
+    fs.rmSync(path.join(folder.path, SIDE_DIRS.thumbs, FOLDER_THUMB), { force: true });
+    folder.poster = null;
+    folder.customPoster = false;
+    folder.posterV = Date.now();
+  }
+
   async setCustomThumb(item, { t, image }) {
     const out = path.join(item.thumbsDir, `${item.base}.jpg`);
     const tmp = path.join(item.thumbsDir, `.${item.id}.tmp.jpg`);

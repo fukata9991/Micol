@@ -167,7 +167,7 @@ function itemDto(it, prog) {
   };
 }
 
-const folderDto = (f) => ({ id: f.id, name: f.name, count: f.count, year: f.nfo?.year ?? null });
+const folderDto = (f) => ({ id: f.id, name: f.name, count: f.count, thumb: f.posterV || 0 });
 
 function getItem(id) {
   const it = library.items.get(id);
@@ -345,7 +345,7 @@ route('DELETE', '/api/history', ({ prog }) => {
 route('GET', '/api/folders/:id', ({ params, prog }) => {
   const f = getFolder(params.id);
   return {
-    folder: { id: f.id, name: f.name, parentId: f.parentId, nfo: f.nfo || null },
+    folder: { id: f.id, name: f.name, parentId: f.parentId, nfo: f.nfo || null, thumb: f.posterV || 0, customThumb: !!f.customPoster },
     breadcrumbs: library.breadcrumbs(f),
     folders: f.folders.map((id) => folderDto(library.folders.get(id))),
     items: f.items.map((id) => itemDto(library.items.get(id), prog)),
@@ -363,6 +363,40 @@ route('GET', '/api/folders/:id/thumb', async ({ res, params, query }) => {
   if (!it) throw new HttpError(404, 'サムネイルなし');
   media.sendImage(res, await cardImage(await media.itemThumb(it), query), 300);
 });
+
+/** フォルダ配下（サブフォルダも含む）の動画。フォルダの画像を選ぶ候補 */
+function folderItems(f, out = [], limit = 1000) {
+  for (const id of f.items) {
+    if (out.length >= limit) return out;
+    out.push(library.items.get(id));
+  }
+  for (const fid of f.folders) {
+    if (out.length >= limit) break;
+    folderItems(library.folders.get(fid), out, limit);
+  }
+  return out;
+}
+
+route('GET', '/api/folders/:id/thumb-candidates', ({ params, prog }) => ({
+  items: folderItems(getFolder(params.id)).filter(Boolean).map((it) => itemDto(it, prog)),
+}), 'admin');
+
+// フォルダの画像を配下の作品のサムネイルにする: { item: 動画 id }
+route('PUT', '/api/folders/:id/thumb', async ({ params, body }) => {
+  const f = getFolder(params.id);
+  const it = getItem(String(body?.item || ''));
+  let under = false;
+  for (let p = library.folders.get(it.folderId); p; p = library.folders.get(p.parentId)) if (p === f) under = true;
+  if (!under) throw new HttpError(400, 'このフォルダの中の動画ではありません');
+  await media.setFolderThumb(f, await media.itemThumb(it));
+  return { ok: true, thumb: f.posterV };
+}, 'admin');
+
+route('DELETE', '/api/folders/:id/thumb', ({ params }) => {
+  const f = getFolder(params.id);
+  media.clearFolderThumb(f);
+  return { ok: true, thumb: f.posterV };
+}, 'admin');
 
 route('GET', '/api/items/:id', async ({ params, prog, user }) => {
   const it = getItem(params.id);
