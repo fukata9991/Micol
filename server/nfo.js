@@ -284,7 +284,8 @@ function decode(buf) {
 }
 
 function all(xml, name) {
-  const re = new RegExp(`<${name}(?:\\s[^>]*)?>([\\s\\S]*?)</${name}>`, 'gi');
+  // <studio /> のような中身の無い要素は開始タグとして扱わない（後ろの </studio> まで読んでしまうため）
+  const re = new RegExp(`<${name}(?:\\s[^>]*)?(?<!/)>([\\s\\S]*?)</${name}>`, 'gi');
   return [...xml.matchAll(re)].map((m) => text(m[1])).filter(Boolean);
 }
 
