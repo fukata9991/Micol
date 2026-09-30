@@ -453,8 +453,83 @@ route('GET', '/api/search', ({ query, prog }) => {
   const q = (query.get('q') || '').trim();
   if (!q) return { folders: [], items: [], people: [] };
   const r = library.search(q);
-  return { folders: r.folders.map(folderDto), items: r.items.map((it) => itemDto(it, prog)), people: r.people.map(personDto) };
+  const age = parseAgeQuery(q);
+  if (!age) return { folders: r.folders.map(folderDto), items: r.items.map((it) => itemDto(it, prog)), people: r.people.map(personDto) };
+  // 年齢での検索（"20歳" "20-25歳"）: 出演当時の年齢が合う作品と、現在の年齢が合う女優。タイトルに一致した作品も後ろに続ける
+  const a = searchByAge(age);
+  if (age.only === 'items') a.people = [];
+  if (age.only === 'people') a.items = [];
+  const seen = new Set(a.items.map((x) => x.it.id));
+  return {
+    age,
+    folders: r.folders.map(folderDto),
+    items: [
+      ...a.items.map((x) => ({ ...itemDto(x.it, prog), ageNote: x.note })),
+      ...r.items.filter((it) => !seen.has(it.id)).map((it) => itemDto(it, prog)),
+    ],
+    people: a.people.map(personDto),
+  };
 });
+
+// ---------- 年齢での検索 ----------
+
+/**
+ * "20歳" "20才" "20-25歳" "20〜25歳" → { min, max, only }。年齢でなければ null。
+ * "当時20歳" は出演当時の年齢の作品だけ（only: 'items'）、"現在20歳" は現在の年齢の女優だけ（only: 'people'）
+ */
+function parseAgeQuery(q) {
+  const m = /^(当時|現在)?\s*(\d{1,2})\s*(?:[-〜~～]\s*(\d{1,2})\s*)?(?:歳|才)$/.exec(q.normalize('NFKC'));
+  if (!m) return null;
+  const a = Number(m[2]);
+  const b = m[3] ? Number(m[3]) : a;
+  return { min: Math.min(a, b), max: Math.max(a, b), only: m[1] === '当時' ? 'items' : m[1] === '現在' ? 'people' : null };
+}
+
+/** "1995-04-12" / "1995-04" / "1995" → その日付がとりうる最初と最後の日 */
+function dateSpan(s) {
+  const m = /^(\d{4})(?:-(\d{2})(?:-(\d{2}))?)?$/.exec(s || '');
+  if (!m) return null;
+  const y = Number(m[1]);
+  if (m[3]) return [[y, +m[2], +m[3]], [y, +m[2], +m[3]]];
+  if (m[2]) return [[y, +m[2], 1], [y, +m[2], new Date(y, +m[2], 0).getDate()]];
+  return [[y, 1, 1], [y, 12, 31]];
+}
+const ageOn = (b, d) => d[0] - b[0] - (d[1] < b[1] || (d[1] === b[1] && d[2] < b[2]) ? 1 : 0);
+
+/** 生年月日と日付から年齢の範囲 [最小, 最大]（年や年月だけの場合は幅がある）。計算できなければ null */
+function ageRange(birthdate, date) {
+  const b = dateSpan(birthdate);
+  const d = dateSpan(date);
+  if (!b || !d) return null;
+  const max = ageOn(b[0], d[1]);
+  if (max < 0) return null;
+  return [Math.max(0, ageOn(b[1], d[0])), max];
+}
+
+const todayStr = () => new Date().toLocaleDateString('sv-SE'); // YYYY-MM-DD
+const ageText = ([a, b]) => (a === b ? `${a}歳` : `${a}〜${b}歳`);
+
+function searchByAge({ min, max }) {
+  const map = library.people();
+  const personOf = (name) => map.get(map.aliasIndex.get(name) ?? name);
+  const hit = (r) => r && r[0] <= max && r[1] >= min;
+  const items = [];
+  for (const it of library.items.values()) {
+    if (!it.nfo?.premiered) continue;
+    const notes = [];
+    for (const name of it.nfo.actors || []) {
+      const r = ageRange(birthdateOf(name, personOf(name)) || it.nfo.actorBirthdates?.[name], it.nfo.premiered);
+      if (hit(r)) notes.push(`${name} 当時${ageText(r)}`);
+    }
+    if (notes.length) items.push({ it, note: notes.join('、') });
+  }
+  items.sort((a, b) => (b.it.nfo.premiered || '').localeCompare(a.it.nfo.premiered || '') || naturalCompare(a.it.name, b.it.name));
+  const today = todayStr();
+  const people = [...map.values()]
+    .filter((p) => hit(ageRange(birthdateOf(p.name, p), today)))
+    .sort((a, b) => b.items.length - a.items.length || naturalCompare(a.name, b.name));
+  return { items: items.slice(0, 300), people: people.slice(0, 200) };
+}
 
 // ---------- 女優（NFO の出演者） ----------
 

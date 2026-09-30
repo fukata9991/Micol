@@ -797,7 +797,7 @@ async function renderPeople(view) {
   try { sort = localStorage.getItem('micol.peopleSort') || 'count'; } catch {}
   view.innerHTML = `<h1 class="page-title">女優</h1>
     <div class="toolbar">
-      <input type="search" class="people-filter" placeholder="名前で絞り込み" aria-label="名前で絞り込み">
+      <input type="search" class="people-filter" placeholder="名前・年齢（25歳、20-25歳）で絞り込み" aria-label="名前・年齢で絞り込み">
       <select class="people-sort" aria-label="並べ替え">
         <option value="count">作品数が多い順</option>
         <option value="name">名前順</option>
@@ -813,8 +813,16 @@ async function renderPeople(view) {
   const collator = new Intl.Collator('ja', { numeric: true, sensitivity: 'base' });
   function draw() {
     const q = filter.value.trim().normalize('NFKC').toLowerCase();
+    // "25歳" "20-25歳" は現在の年齢で絞り込む
+    const am = /^(\d{1,2})\s*(?:[-〜~～]\s*(\d{1,2})\s*)?(?:歳|才)$/.exec(q);
+    const [amin, amax] = am ? [Number(am[1]), Number(am[2] ?? am[1])].sort((x, y) => x - y) : [];
+    const ageHit = (p) => {
+      const b = dateSpan(p.birthdate);
+      const t = dateSpan(todayStr());
+      return b && t && ageOn(b[0], t[1]) >= amin && Math.max(0, ageOn(b[1], t[0])) <= amax;
+    };
     const list = d.people
-      .filter((p) => !q || [p.name, ...(p.aliases || [])].some((n) => n.normalize('NFKC').toLowerCase().includes(q)))
+      .filter((p) => !q || (am ? ageHit(p) : [p.name, ...(p.aliases || [])].some((n) => n.normalize('NFKC').toLowerCase().includes(q))))
       .sort((a, b) => (sortSel.value === 'count' ? b.count - a.count : 0) || collator.compare(a.name, b.name));
     $('.people-count', view).textContent = `${list.length} 人`;
     grid.innerHTML = list.length ? list.map(personCard).join('') : '<div class="empty">見つかりませんでした</div>';
@@ -1015,10 +1023,13 @@ async function renderAliasSuggestions(view) {
 async function renderSearch(view, q) {
   if (searchForm.q.value.trim() !== q) searchForm.q.value = q;
   const d = await api(`/api/search?q=${encodeURIComponent(q)}`);
+  // 年齢での検索（"20歳" "20-25歳"）: 女優は現在の年齢、動画は出演当時の年齢で探した結果
+  const age = d.age ? (d.age.min === d.age.max ? `${d.age.min}歳` : `${d.age.min}〜${d.age.max}歳`) : '';
   view.innerHTML = `<h1 class="page-title">「${esc(q)}」の検索結果</h1>
-    ${d.people?.length ? section('女優', `<div class="grid people-grid">${d.people.map(personCard).join('')}</div>`) : ''}
+    ${age ? `<p class="hint age-hint">${d.age.only === 'people' ? `現在 ${age} の女優です。` : d.age.only === 'items' ? `出演者が当時 ${age} の作品です（発売日と生年月日から計算）。` : `女優は現在 ${age}、動画は出演者が当時 ${age} の作品です（発売日と生年月日から計算）。「当時${age}」「現在${age}」で片方だけにできます。`}</p>` : ''}
+    ${d.people?.length ? section(age ? `女優（現在 ${age}）` : '女優', `<div class="grid people-grid">${d.people.map(personCard).join('')}</div>`) : ''}
     ${d.folders.length ? section('フォルダ', `<div class="grid">${d.folders.map(folderCard).join('')}</div>`) : ''}
-    ${d.items.length ? section('動画', `<div class="grid">${d.items.map((it) => itemCard(it)).join('')}</div>`) : ''}
+    ${d.items.length ? section(age ? `動画（出演当時 ${age}）` : '動画', `<div class="grid">${d.items.map((it) => itemCard(it, it.ageNote || '')).join('')}</div>`) : ''}
     ${!d.folders.length && !d.items.length && !d.people?.length ? '<div class="empty">見つかりませんでした</div>' : ''}`;
 }
 

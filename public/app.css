@@ -179,6 +179,7 @@ body.playing main { padding: 0; max-width: none; }
 .modal-actions { display: flex; justify-content: flex-end; gap: 10px; }
 .aliases { margin: 6px 0; display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
 .alias-hint { margin: 0 0 12px; }
+.age-hint { margin: -4px 0 16px; }
 .alias-toggle { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; color: var(--muted); margin-bottom: 8px; }
 .alias-row[hidden] { display: none; }
 .alias-list { list-style: none; margin: 0; padding: 0; }
