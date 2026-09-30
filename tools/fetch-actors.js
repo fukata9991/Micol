@@ -32,6 +32,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
+import https from 'node:https';
 import { VIDEO_EXT, SIDE_DIRS } from '../server/library.js';
 import { readNfo, writeNfo, normalizeDate } from '../server/nfo.js';
 import { DATA_DIR, CACHE_DIR } from '../server/store.js';
@@ -539,6 +540,15 @@ async function fillBirthdates() {
         if (p?.birth) return { birth: p.birth, from: n === name ? 'erozuki' : `erozuki(別名 ${n})` };
       }
       return null;
+    },
+    async (name) => {
+      // 口コミ屋: 名前（と分かっている別名）が 1 人だけ一致する女優ページ → 保存済みのページの別名
+      for (const n of [name, ...(aliases.get(name) || [])]) {
+        const p = await kutiProfile(n);
+        if (p?.birth) return { birth: p.birth, from: n === name ? '口コミ屋' : `口コミ屋(別名 ${n})` };
+      }
+      const q = kutiKnownProfiles().find((x) => x.birth && x.aliases.includes(name));
+      return q ? { birth: q.birth, from: `口コミ屋(${q.name} の別名)` } : null;
     },
     async (name) => {
       for (const n of [name, ...(aliases.get(name) || [])]) {
@@ -1089,6 +1099,17 @@ async function suggestAliases() {
     }
     if (++n % 50 === 0) console.log(`  みんなのAV: ${n} / ${library.size} 人`);
   }
+  // 口コミ屋: ライブラリの女優のうち、一覧で名前が 1 人だけ一致する女優のページの 別名
+  n = 0;
+  for (const name of library) {
+    try {
+      const p = await kutiProfile(name);
+      if (p?.aliases.length) addGroup([name, ...p.aliases], '口コミ屋');
+    } catch (e) {
+      console.warn(`口コミ屋 の取得に失敗: ${name} (${e.message})`);
+    }
+    if (++n % 50 === 0) console.log(`  口コミ屋: ${n} / ${library.size} 人`);
+  }
   const out = [...pairs.values()]
     .filter((p) => p.names.some((n) => library.has(n)))
     .map((p) => ({ names: p.names, sources: [...p.sources].sort() }))
@@ -1633,6 +1654,114 @@ async function fillFromSpermmania() {
   console.log(`
 Spermmania: 日本語名にした ${sure} 行（○）、ローマ字名が残った ${partial} 行（?）
 一覧: ${REVIEW}（生年月日は --births で探せます）`);
+}
+
+// ---------- 口コミ屋（kutikomiya.jp） ----------
+//
+// 読み仮名の行ごとの女優一覧（/search/av-idol/yomi/sa/page:2/ …）から 名前 -> 女優ページ（/av-idol/sakaida-minami/）を作り、
+// 女優ページの「生年月日： 1989/10/01」「別名： 美波（みなみ、ガチん娘）、磯川裕子（…）、…」を読む（写真は使わない）。
+// このサイトは古い暗号化の設定（短い DH 鍵）のため、このサイトへの接続に限って安全性の水準を下げて接続する
+
+const KUTI = 'https://kutikomiya.jp/';
+const KUTI_CACHE = path.join(CACHE_DIR, 'kutikomiya');
+const KUTI_ROWS = ['a', 'ka', 'sa', 'ta', 'na', 'ha', 'ma', 'ya', 'ra', 'wa'];
+let kutiAgent = null;
+let kutiNames = null;
+
+function kutiFetch(url) {
+  kutiAgent ||= new https.Agent({ ciphers: 'DEFAULT@SECLEVEL=0', keepAlive: true });
+  return new Promise((resolve, reject) => {
+    const req = https.get(url, { agent: kutiAgent, headers: { 'User-Agent': UA }, timeout: 30000 }, (res) => {
+      const chunks = [];
+      res.on('data', (c) => chunks.push(c));
+      res.on('end', () => resolve({ status: res.statusCode, body: Buffer.concat(chunks).toString('utf8') }));
+    });
+    req.on('timeout', () => req.destroy(new Error('timeout')));
+    req.on('error', reject);
+  });
+}
+
+async function kutiGet(rel) {
+  fs.mkdirSync(KUTI_CACHE, { recursive: true });
+  const cacheFile = path.join(KUTI_CACHE, cacheName(rel.replace(/[\\/:*?"<>|]/g, '_'), '.html'));
+  if (fs.existsSync(cacheFile)) return fs.readFileSync(cacheFile, 'utf8');
+  await sleep(2000); // 負担をかけないよう 2 秒に 1 回まで
+  let r;
+  for (let attempt = 0; ; attempt++) {
+    r = await kutiFetch(KUTI + rel);
+    if ((r.status !== 429 && r.status !== 503) || attempt >= 3) break;
+    await sleep(60000 * 2 ** attempt);
+  }
+  const html = r.status === 404 ? '' : r.status === 200 ? r.body : null;
+  if (html === null) throw new Error(`HTTP ${r.status}`);
+  fs.writeFileSync(cacheFile, html);
+  return html;
+}
+
+/** 名前 -> [女優ページの名前（sakaida-minami）]（保存して 30 日間使う） */
+async function kutiIndex() {
+  if (kutiNames) return kutiNames;
+  const indexFile = path.join(KUTI_CACHE, 'index.json');
+  const saved = readJson(indexFile);
+  if (saved && Date.now() - saved.created < 30 * 86400000) return (kutiNames = new Map(Object.entries(saved.names)));
+  console.log('口コミ屋 の女優一覧を読み込んでいます（初回のみ・数分かかります）');
+  const names = new Map();
+  for (const row of KUTI_ROWS) {
+    for (let page = 1; page <= 80; page++) {
+      const html = await kutiGet(`search/av-idol/yomi/${row}/${page > 1 ? `page:${page}/` : ''}`);
+      let n = 0;
+      for (const m of (html || '').matchAll(/<a[^>]+href="https:\/\/kutikomiya\.jp\/av-idol\/([a-z0-9-]+)\/"[^>]*>([\s\S]*?)<\/a>/g)) {
+        if (/^(photo-album|archive|ranking)$/.test(m[1])) continue;
+        const name = strip(m[2]).replace(/\s*[（(].*$/, '').trim();
+        if (!name) continue;
+        if (!names.has(name)) names.set(name, []);
+        if (!names.get(name).includes(m[1])) names.get(name).push(m[1]);
+        n++;
+      }
+      if (!n || !html.includes(`yomi/${row}/page:${page + 1}/`)) break;
+    }
+  }
+  fs.writeFileSync(indexFile, JSON.stringify({ created: Date.now(), names: Object.fromEntries(names) }));
+  console.log(`  口コミ屋 の女優一覧: ${names.size} 人`);
+  return (kutiNames = names);
+}
+
+/** 女優ページのプロフィール: { name, aliases, birth } */
+function parseKuti(html, name) {
+  if (!html) return null;
+  const text = strip(html.replace(/<br\s*\/?>|<\/(tr|td|th|p|div|li|dd|dt|h\d)>/gi, '\n'));
+  const b = /生年月日[：:]\s*(\d{4})\/(\d{1,2})\/(\d{1,2})/.exec(text);
+  // 別名： 美波（みなみ、ガチん娘）、磯川裕子（いそかわ・ひろこ）、…、しょうこ（読み仮名の括弧の中にも「、」があるので先に除く）
+  const alias = strip(/別名[：:]\s*<b>([\s\S]*?)<\/b>/.exec(html)?.[1] || '');
+  const aliases = alias
+    .replace(/[（(][^（）()]*[）)]/g, '')
+    .split(/、/)
+    .map((s) => s.trim())
+    .filter((s) => s && s !== '-' && s !== name && s.length <= 20);
+  return { name, aliases: [...new Set(aliases)], birth: b ? normalizeDate(`${b[1]}-${b[2]}-${b[3]}`) || '' : '' };
+}
+
+/** 名前が一致する女優が 1 人だけなら、その女優ページのプロフィール */
+async function kutiProfile(name) {
+  const slugs = (await kutiIndex()).get(name) || [];
+  if (slugs.length !== 1) return null;
+  return parseKuti(await kutiGet(`av-idol/${slugs[0]}/`), name);
+}
+
+/** 保存済みの女優ページのプロフィール一覧 */
+let kutiKnown = null;
+function kutiKnownProfiles() {
+  if (kutiKnown) return kutiKnown;
+  kutiKnown = [];
+  if (!fs.existsSync(KUTI_CACHE)) return kutiKnown;
+  for (const f of fs.readdirSync(KUTI_CACHE)) {
+    if (!f.startsWith('av-idol_')) continue;
+    const html = fs.readFileSync(path.join(KUTI_CACHE, f), 'utf8');
+    const name = strip(/<title>([^（<]+)/.exec(html)?.[1] || '').trim();
+    const p = name && parseKuti(html, name);
+    if (p) kutiKnown.push(p);
+  }
+  return kutiKnown;
 }
 
 // ---------- 書き込み ----------

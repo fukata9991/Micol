@@ -138,7 +138,7 @@ Kodi / Jellyfin 形式の NFO ファイルに対応しています（UTF-8 / Shi
 2. 一覧を Excel などで開き、「適用」列を確認します。`○` の行が書き込まれ、`?`（ファイル名からの候補で要確認）は
    `○` か `×` に変えてください。出演者（`／` 区切り）・生年月日・発売日も直せます
    - `node tools\fetch-actors.js --births` で、`○` の行の生年月日が空の出演者を女優名で検索して埋めます
-     （av-wiki.net の女優ページ → このAV女優の名前教えてwiki → 無修正動画エログ → Wikipedia の AV 女優の記事 → みんなのAV の女優ページの順。別名でも探します。取得元は「備考」列）
+     （av-wiki.net の女優ページ → このAV女優の名前教えてwiki → 無修正動画エログ → 口コミ屋 → Wikipedia の AV 女優の記事 → みんなのAV の女優ページの順。別名でも探します。取得元は「備考」列）
      みんなのAV は初回だけ五十音の女優一覧を全部読むため 30 分ほどかかります（`data\cache\minnano` に保存して 30 日間再利用）
    - `node tools\fetch-actors.js --titles` で、出演者が空の行を av-wiki.net の品番検索・タイトル検索で埋めます
      （品番で確かめられたものは `○`、タイトルだけで見つけたものは `?`）
@@ -152,7 +152,7 @@ Kodi / Jellyfin 形式の NFO ファイルに対応しています（UTF-8 / Shi
    （タイトルの日本語名・作品番号）で日本語名にします（作品番号まで一致したものは `○`、名前だけのものは `?`）
 8. `node tools\fetch-actors.js --spermmania` … Spermmania（`001-Yui Kawagoe.mp4`）の行を、1pondo.com の作品ページ
    （タイトルの日本語名）で日本語名にします（作品番号まで一致するので `○`。見つからない女優はローマ字名のまま `?`）
-4. `node tools\fetch-actors.js --aliases` … 同じ女優の別名の候補（r18.dev・av-wiki・tokyo-face-fuck.com・Wikipedia・このAV女優の名前教えてwiki・みんなのAV）を
+4. `node tools\fetch-actors.js --aliases` … 同じ女優の別名の候補（r18.dev・av-wiki・tokyo-face-fuck.com・Wikipedia・このAV女優の名前教えてwiki・みんなのAV・口コミ屋）を
    `data\people-aliases-suggested.json` に書き出します。Micol は 2 か所以上の情報源で一致した組を自動で同じ女優にまとめ、
    残りは女優一覧の「別名の候補を確認」で「同じ女優」「違う」を選べます
 
