@@ -1,6 +1,6 @@
 :root {
   /* サムネイル枠の縦横比。ライブラリでいちばん多い動画の比率に app.js が上書きする */
-  --thumb-ratio: 16 / 9;
+  --thumb-ratio: 16 / 10;
   --bg: #101114;
   --surface: #1a1c21;
   --surface-2: #24272e;
@@ -105,9 +105,9 @@ body.playing main { padding: 0; max-width: none; }
 .thumb-img { inset: 0; width: 100%; height: 100%; object-fit: contain; }
 .thumb-bg { inset: -12%; width: 124%; height: 124%; object-fit: cover; filter: blur(16px) brightness(.5) saturate(1.2); }
 .noimg img { visibility: hidden; }
-/* 動画のパネルは枠いっぱいに表示する。比率が違う動画は、はみ出した分だけ切り取る */
-.card:not(.folder) .thumb-img, .hist-row .thumb-img { object-fit: cover; }
-.card:not(.folder) .thumb-bg, .hist-row .thumb-bg { display: none; }
+/* 一覧のカード（動画・フォルダ）は枠いっぱいに表示する。比率が違う画像は、はみ出した分だけ切り取る */
+.card .thumb-img, .hist-row .thumb-img { object-fit: cover; }
+.card .thumb-bg, .hist-row .thumb-bg { display: none; }
 .badge {
   position: absolute; top: 8px; right: 8px; min-width: 24px; height: 24px; padding: 0 7px;
   display: grid; place-items: center; border-radius: 12px;

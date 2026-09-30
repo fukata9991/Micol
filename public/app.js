@@ -84,13 +84,8 @@ const thumbUrl = (it) => `/api/items/${it.id}/thumb?v=${it.thumb}`;
 // 一覧のカード用（縮小版）。詳細画面は元の画像（thumbUrl）
 const cardThumbUrl = (it) => `${thumbUrl(it)}&w=480`;
 
-/** サムネイル枠の縦横比（ライブラリでいちばん多い動画の比率）。次回の表示用に覚えておく */
-function setThumbRatio(r) {
-  if (!(r > 0)) return;
-  document.body.style.setProperty('--thumb-ratio', r.toFixed(4));
-  try { localStorage.setItem('micol.thumbRatio', String(r)); } catch {}
-}
-try { setThumbRatio(Number(localStorage.getItem('micol.thumbRatio'))); } catch {}
+// サムネイル枠の縦横比は 16:10 で固定（app.css の --thumb-ratio）
+try { localStorage.removeItem('micol.thumbRatio'); } catch {}
 
 function episodeLabel(it) {
   if (it.episode == null) return '';
@@ -256,7 +251,6 @@ async function loadLibraries() {
   try {
     const d = await api('/api/libraries');
     libraries = d.libraries;
-    setThumbRatio(d.thumbRatio);
   } catch { return; }
   renderSidebar();
 }
@@ -457,7 +451,6 @@ function refreshWhileScanning(scanning, seq) {
 
 async function renderHome(view, seq) {
   const d = await api('/api/home');
-  setThumbRatio(d.thumbRatio);
   const libKey = (list) => list?.map((l) => l.id + l.name).join('|');
   if (libKey(d.libraries) !== libKey(libraries)) {
     libraries = d.libraries;
