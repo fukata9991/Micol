@@ -526,7 +526,13 @@ async function renderItem(view, id) {
           <span>${it.next ? `<a class="btn small" href="#/item/${it.next.id}">${esc(it.next.name)} ›</a>` : ''}</span>
         </div>
       </div>
-    </div>`;
+    </div>
+    ${(it.related || []).map((g) => {
+      const more = g.total > g.items.length
+        ? `<a class="section-more" href="${g.person ? personHref(g.person) : `#/folder/${g.folder}`}">すべて見る（${g.total}）</a>` : '';
+      return `<section class="section related"><div class="section-head"><h2 class="section-title">${esc(g.title)}</h2>${more}</div>
+        <div class="grid">${g.items.map((x) => itemCard(x)).join('')}</div></section>`;
+    }).join('')}`;
   $('#toggle-watched', view).onclick = async () => {
     await api(`/api/items/${id}/watched`, { method: 'POST', body: { watched: !it.watched } });
     router();

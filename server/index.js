@@ -387,8 +387,38 @@ route('GET', '/api/items/:id', async ({ params, prog, user }) => {
     breadcrumbs: folder ? library.breadcrumbs(folder) : [],
     prev: i > 0 ? sibling(i - 1) : null,
     next: i >= 0 ? sibling(i + 1) : null,
+    related: relatedItems(it, siblings, i, prog),
   };
 });
+
+/**
+ * 詳細画面の下に並べる関連動画: 出演者ごとの他の出演作（新しい順）と、同じフォルダの前後の動画。
+ * [{ title, person?, items }]（空の組は含めない）
+ */
+function relatedItems(it, siblings, i, prog) {
+  const LIMIT = 12;
+  const groups = [];
+  const seen = new Set();
+  for (const name of (it.nfo?.actors || []).slice(0, 4)) {
+    const p = library.personOf(name);
+    if (!p || seen.has(p.name)) continue;
+    seen.add(p.name);
+    const items = p.items
+      .filter((id) => id !== it.id)
+      .map((id) => library.items.get(id))
+      .filter(Boolean)
+      .sort((a, b) => (b.nfo?.premiered || '').localeCompare(a.nfo?.premiered || '') || naturalCompare(a.name, b.name));
+    if (items.length) groups.push({ title: `${p.name} の出演作`, person: p.name, total: items.length, items: items.slice(0, LIMIT).map((x) => itemDto(x, prog)) });
+  }
+  // 同じフォルダ: この動画の後ろを優先し、足りない分は前から
+  if (i >= 0 && siblings.length > 1) {
+    const after = siblings.slice(i + 1, i + 1 + LIMIT);
+    const before = siblings.slice(Math.max(0, i - (LIMIT - after.length)), i);
+    const ids = [...before, ...after];
+    if (ids.length) groups.push({ title: '同じフォルダの動画', folder: it.folderId, total: siblings.length - 1, items: ids.map((id) => itemDto(library.items.get(id), prog)) });
+  }
+  return groups;
+}
 
 route('GET', '/api/items/:id/thumb', async ({ res, params, query }) => {
   // ?v= 付きの URL はサムネイルが変わると URL も変わるので長くキャッシュしてよい

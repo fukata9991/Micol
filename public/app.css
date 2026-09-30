@@ -131,7 +131,12 @@ body.playing main { padding: 0; max-width: none; }
 .card-sub { font-size: 12px; color: var(--muted); }
 
 /* ---------- 詳細 ---------- */
-.detail { display: grid; grid-template-columns: minmax(0, 560px) minmax(0, 1fr); gap: 32px; margin-top: 18px; }
+.detail { display: grid; grid-template-columns: minmax(0, 3fr) minmax(320px, 2fr); gap: 32px; margin-top: 18px; }
+/* 詳細画面の下の関連動画 */
+.related { margin-top: 32px; }
+.section-head { display: flex; align-items: baseline; gap: 12px; }
+.section-head .section-title { flex: 1; min-width: 0; }
+.section-more { font-size: 13px; color: var(--accent); white-space: nowrap; }
 .detail-thumb { position: relative; aspect-ratio: var(--thumb-ratio); border-radius: var(--radius); overflow: hidden; background: var(--surface); }
 .detail h1 { font-size: 26px; word-break: break-word; }
 .meta { display: flex; flex-wrap: wrap; gap: 8px; margin: 12px 0 18px; }
