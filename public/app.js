@@ -31,22 +31,6 @@ function fmtTime(s) {
   return (h ? `${h}:${String(m).padStart(2, '0')}` : m) + ':' + String(sec).padStart(2, '0');
 }
 
-function fmtSize(b) {
-  const u = ['B', 'KB', 'MB', 'GB', 'TB'];
-  let i = 0;
-  while (b >= 1024 && i < u.length - 1) { b /= 1024; i++; }
-  return `${b.toFixed(i ? 1 : 0)} ${u[i]}`;
-}
-
-function resLabel(w, h) {
-  if (!h) return '';
-  if (w >= 3800 || h >= 2000) return '4K';
-  if (h >= 1400) return '1440p';
-  if (h >= 1000 || w >= 1900) return '1080p';
-  if (h >= 700 || w >= 1260) return '720p';
-  return `${h}p`;
-}
-
 let toastTimer;
 function toast(msg, ms = 3000) {
   const el = $('#toast');
@@ -503,7 +487,6 @@ function audioLabel(a) {
 async function renderItem(view, id) {
   const it = await api(`/api/items/${id}`);
   if (it.breadcrumbs[0]) markNav(`#/folder/${it.breadcrumbs[0].id}`);
-  const v = it.video;
   const resume = it.position > 10;
   const ep = episodeLabel(it);
   view.innerHTML = `
@@ -518,9 +501,6 @@ async function renderItem(view, id) {
         <h1>${ep ? `<span class="ep">${esc(ep)}</span>` : ''}${esc(it.name)}</h1>
         <div class="meta">${[
           it.duration && fmtTime(it.duration),
-          v && resLabel(v.width, v.height),
-          it.container.toUpperCase(),
-          fmtSize(it.size),
           it.watched && '視聴済み',
         ].filter(Boolean).map((x) => `<span>${esc(x)}</span>`).join('')}</div>
         <div class="actions">
@@ -532,9 +512,6 @@ async function renderItem(view, id) {
         ${resume && it.duration ? `<div class="bar"><div style="width:${(it.position / it.duration) * 100}%"></div></div>` : ''}
         ${nfoBlock(it.nfo, { people: true, cast: it.cast, itemId: it.id })}
         <dl class="tech">
-          <dt>映像</dt><dd>${v ? esc(`${v.codec.toUpperCase()} ${v.profile} ${v.width}×${v.height}`) : '—'}</dd>
-          <dt>音声</dt><dd>${it.audio.length ? it.audio.map((a) => esc(audioLabel(a))).join('<br>') : '—'}</dd>
-          <dt>字幕</dt><dd>${it.subtitles.length ? it.subtitles.map((s) => esc(s.label + (s.supported ? '' : '（非対応）'))).join('<br>') : '—'}</dd>
           <dt>ファイル</dt><dd>${esc(it.path)}</dd>
         </dl>
         <div class="nav-links">
