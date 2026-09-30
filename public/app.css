@@ -51,7 +51,8 @@ h1, h2, h3 { margin: 0; line-height: 1.3; }
 button.icon-btn { flex-shrink: 0; padding: 0; border: 0; background: none; cursor: pointer; }
 #menu-btn { color: var(--text); margin-left: -6px; }
 
-main { padding: 24px; max-width: 1800px; margin: 0 auto; }
+/* 横幅は画面いっぱいに使う（カードの一覧は幅に合わせて列が増える） */
+main { padding: 24px; }
 body.playing .topbar, body.playing .sidebar, body.playing .sidebar-backdrop { display: none; }
 body.playing main { padding: 0; max-width: none; }
 
