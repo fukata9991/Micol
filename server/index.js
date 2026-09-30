@@ -303,7 +303,12 @@ route('GET', '/api/favorites', ({ prog, user }) => {
 });
 
 // お気に入りの動画 id（カードのハートの表示用）
-route('GET', '/api/favorites/ids', ({ user }) => ({ items: Object.keys(userFavorites(user).items) }));
+route('GET', '/api/favorites/ids', ({ user }) => {
+  const fav = userFavorites(user);
+  // 女優は代表名で返す（別名で登録していても、一覧のカードは代表名なので）
+  const people = new Set(Object.keys(fav.people).map((n) => library.personOf(n)?.name).filter(Boolean));
+  return { items: Object.keys(fav.items), people: [...people] };
+});
 
 route('PUT', '/api/favorites/items/:id', ({ params, body, user }) => {
   const it = getItem(params.id);

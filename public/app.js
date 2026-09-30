@@ -170,11 +170,39 @@ document.addEventListener('click', (e) => {
 // ---------- お気に入り（カードのハート） ----------
 
 let favItems = new Set(); // お気に入りの動画 id
+let favPeople = new Set(); // お気に入りの女優（代表名）
 let favReady = Promise.resolve();
 function loadFavIds() {
-  favReady = api('/api/favorites/ids').then((d) => { favItems = new Set(d.items); }).catch(() => {});
+  favReady = api('/api/favorites/ids').then((d) => {
+    favItems = new Set(d.items);
+    favPeople = new Set(d.people);
+  }).catch(() => {});
   return favReady;
 }
+
+function personFavButton(name) {
+  const on = favPeople.has(name);
+  const label = on ? 'お気に入りから外す' : 'お気に入りに追加';
+  return `<button class="card-fav${on ? ' on' : ''}" data-fav-person="${esc(name)}" title="${label}" aria-label="${label}" aria-pressed="${on}">${navSvg(on ? 'heart' : 'heartOutline')}</button>`;
+}
+
+// 女優カードのハート
+document.addEventListener('click', async (e) => {
+  const btn = e.target.closest('[data-fav-person]');
+  if (!btn) return;
+  e.preventDefault();
+  e.stopPropagation();
+  const name = btn.dataset.favPerson;
+  try {
+    const r = await api(`/api/favorites/person?name=${encodeURIComponent(name)}`, { method: 'PUT', body: { favorite: !favPeople.has(name) } });
+    if (r.favorite) favPeople.add(name);
+    else favPeople.delete(name);
+    document.querySelectorAll('[data-fav-person]').forEach((b) => { if (b.dataset.favPerson === name) b.outerHTML = personFavButton(name); });
+    toast(r.favorite ? 'お気に入りに追加しました' : 'お気に入りから外しました');
+  } catch (err) {
+    toast(err.message);
+  }
+});
 
 function cardFavButton(id) {
   const on = favItems.has(id);
@@ -907,18 +935,20 @@ function todayStr() {
 const personHref = (name) => `#/person?name=${encodeURIComponent(name)}`;
 
 /** 女優の写真。写真がない・読めないときは頭文字を表示する */
-function personPhoto(p, lazy = true) {
+function personPhoto(p, lazy = true, extra = '') {
   return `<div class="thumb person-thumb" style="--hue:${nameHue(p.name)}">
     <span class="person-initial" aria-hidden="true">${esc([...p.name.trim()][0] || '?')}</span>
     ${p.thumb ? `<img class="person-img" ${lazy ? 'loading="lazy" ' : ''}src="/api/person/thumb?name=${encodeURIComponent(p.name)}&v=${encodeURIComponent(p.thumb)}" alt="" referrerpolicy="no-referrer" onerror="this.remove()">` : ''}
+    ${extra}
   </div>`;
 }
 
+/** 女優のカード: 写真の上に作品数・年齢・別名の数を重ね、左上にお気に入りのハート */
 function personCard(p) {
+  const info = [`${p.count}作品`, p.birthdate && ageLabel(p.birthdate, todayStr()), p.aliases?.length && `別名${p.aliases.length}`].filter(Boolean);
   return `<a class="card person" href="${personHref(p.name)}">
-    ${personPhoto(p)}
+    ${personPhoto(p, true, `${personFavButton(p.name)}<div class="person-info">${info.map((x) => `<span>${esc(x)}</span>`).join('')}</div>`)}
     <div class="card-title" title="${esc([p.name, ...(p.aliases || [])].join('／'))}">${esc(p.name)}</div>
-    <div class="card-sub">${[`${p.count} 作品`, p.birthdate && ageLabel(p.birthdate, todayStr()), p.aliases?.length && `別名 ${p.aliases.length}`].filter(Boolean).join(' ・ ')}</div>
   </a>`;
 }
 
@@ -1019,7 +1049,7 @@ async function renderPerson(view, name) {
       ageLabel(d.birthdate, it.released) ? `当時 ${ageLabel(d.birthdate, it.released)}` : '',
     ].filter(Boolean).join(' ・ '))).join('')}</div>`;
 
-  bindFavButton($('.fav-btn', view), `/api/favorites/person?name=${encodeURIComponent(d.name)}`);
+  bindFavButton($('.fav-btn', view), `/api/favorites/person?name=${encodeURIComponent(d.name)}`, (on) => { if (on) favPeople.add(d.name); else favPeople.delete(d.name); });
   if (!me.admin) return;
   // 写真の変更・削除（出演作のフォルダの .actors/名義.jpg を書き換える）
   $('#photo-file', view).addEventListener('change', async (e) => {
