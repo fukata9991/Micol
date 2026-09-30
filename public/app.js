@@ -968,6 +968,8 @@ async function renderPeople(view) {
       <select class="people-sort" aria-label="並べ替え">
         <option value="count">作品数が多い順</option>
         <option value="name">名前順</option>
+        <option value="young">年齢が若い順</option>
+        <option value="old">年齢が高い順</option>
       </select>
       <span class="muted people-count"></span>
     </div>
@@ -978,6 +980,16 @@ async function renderPeople(view) {
   const grid = $('.people-grid', view);
   sortSel.value = sort;
   const collator = new Intl.Collator('ja', { numeric: true, sensitivity: 'base' });
+  // 年齢順は生年月日（YYYY / YYYY-MM / YYYY-MM-DD）で比べる。生年月日が無い女優は最後
+  function bySort(a, b) {
+    const s = sortSel.value;
+    if (s === 'count') return b.count - a.count;
+    if (s === 'young' || s === 'old') {
+      if (!a.birthdate || !b.birthdate) return (a.birthdate ? 0 : 1) - (b.birthdate ? 0 : 1);
+      return s === 'young' ? b.birthdate.localeCompare(a.birthdate) : a.birthdate.localeCompare(b.birthdate);
+    }
+    return 0;
+  }
   function draw() {
     const q = filter.value.trim().normalize('NFKC').toLowerCase();
     // "25歳" "20-25歳" は現在の年齢で絞り込む
@@ -990,7 +1002,7 @@ async function renderPeople(view) {
     };
     const list = d.people
       .filter((p) => !q || (am ? ageHit(p) : [p.name, ...(p.aliases || [])].some((n) => n.normalize('NFKC').toLowerCase().includes(q))))
-      .sort((a, b) => (sortSel.value === 'count' ? b.count - a.count : 0) || collator.compare(a.name, b.name));
+      .sort((a, b) => bySort(a, b) || collator.compare(a.name, b.name));
     $('.people-count', view).textContent = `${list.length} 人`;
     grid.innerHTML = list.length ? list.map(personCard).join('') : '<div class="empty">見つかりませんでした</div>';
   }
