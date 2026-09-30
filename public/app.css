@@ -600,6 +600,18 @@ button.avatar:hover, button.avatar[aria-expanded="true"] { box-shadow: 0 0 0 3px
   padding: 1px 6px; border-radius: 4px; background: rgba(0,0,0,.55); color: #fff;
   font-size: 11px; font-weight: 600; font-variant-numeric: tabular-nums; white-space: nowrap;
 }
+@media (max-width: 640px) {
+  /* スマホ: 女優カードは 1 行に 4 枚（小 5 枚・大 3 枚）。写真に重ねる情報・ハート・名前も小さくする */
+  .people-grid { grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px 8px; }
+  body[data-size="s"] .people-grid { grid-template-columns: repeat(5, minmax(0, 1fr)); }
+  body[data-size="l"] .people-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  .card.person .card-title { margin-top: 4px; font-size: 12px; }
+  .card.person .person-initial { font-size: 28px; }
+  .card.person .card-fav { top: 4px; left: 4px; width: 24px; height: 24px; }
+  .card.person .card-fav svg { width: 14px; height: 14px; }
+  .person-info { gap: 2px; padding: 14px 3px 3px; }
+  .person-info span { padding: 0 3px; font-size: 9px; line-height: 1.5; }
+}
 .person-head { display: flex; gap: 20px; align-items: center; margin: 8px 0 24px; }
 .person-head .person-thumb { width: 120px; flex-shrink: 0; }
 .person-head .person-initial { font-size: 48px; }
