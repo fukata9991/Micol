@@ -300,9 +300,9 @@ function renderSidebar() {
   $('#sidebar').innerHTML = `
     <div class="nav-group">
       ${navLink('#/', 'home', 'ホーム')}
-      ${navLink('#/history', 'history', '履歴')}
       ${navLink('#/favorites', 'heart', 'お気に入り')}
       ${navLink('#/people', 'person', '女優')}
+      ${navLink('#/history', 'history', '履歴')}
     </div>
     <div class="nav-group nav-libs">
       <div class="nav-heading">ライブラリ</div>
