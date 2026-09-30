@@ -494,7 +494,7 @@ async function renderItem(view, id) {
     <div class="detail">
       <div>
         <div class="detail-thumb">${thumbImg(thumbUrl(it), false)}</div>
-        ${me.admin ? '<button class="btn small thumb-edit" id="edit-thumb">🖼 サムネイルを変更</button><button class="btn small thumb-edit" id="edit-nfo">✎ メタデータを編集</button>' : ''}
+        ${me.admin ? '<button class="btn small icon-btn thumb-edit" id="edit-nfo" title="編集" aria-label="メタデータを編集">✎</button>' : ''}
       </div>
       <div>
         ${it.nfo?.showTitle ? `<div class="muted">${esc(it.nfo.showTitle)}</div>` : ''}
@@ -524,9 +524,6 @@ async function renderItem(view, id) {
     await api(`/api/items/${id}/watched`, { method: 'POST', body: { watched: !it.watched } });
     router();
   };
-  if (me.admin) $('#edit-thumb', view).onclick = async () => {
-    if (await thumbEditor(it)) router();
-  };
   if (me.admin) $('#edit-nfo', view).onclick = async () => {
     if (await nfoEditor(it)) router();
   };
@@ -536,6 +533,7 @@ async function renderItem(view, id) {
 function nfoEditor(it) {
   const n = it.nfo || {};
   const list = (a) => (a || []).join(', ');
+  const choices = api('/api/nfo-values').catch(() => ({}));
   const text = (name, label, value, attrs = '') =>
     `<label class="field ${attrs.includes('grow') ? 'grow' : ''}">${label}<input name="${name}" value="${esc(value ?? '')}" ${attrs.replace('grow', '')}></label>`;
   // 保存先は常に .nfo\動画名.nfo（別の場所の NFO を使っていた場合はその内容を引き継ぐ）
@@ -547,21 +545,17 @@ function nfoEditor(it) {
     modal.innerHTML = `<form class="modal-box wide nfo-form" role="dialog" aria-label="メタデータを編集">
       <h3>メタデータを編集</h3>
       <div class="nfo-fields">
+        <div class="nfo-thumb">
+          <div class="nfo-thumb-img">${thumbImg(thumbUrl(it), false)}</div>
+          <button type="button" class="btn small" data-act="thumb">🖼 サムネイルを変更</button>
+        </div>
         <div class="form-row">${text('title', 'タイトル', n.title ?? it.name, 'grow')}</div>
         <div class="form-row">${text('originalTitle', '原題', n.originalTitle, 'grow')}${text('sortTitle', '並べ替え用タイトル', n.sortTitle, 'grow')}</div>
-        <div class="form-row">
-          ${text('premiered', '発売日', n.premiered, 'size="12" placeholder="2019/05/25"')}
-          ${text('season', 'シーズン', n.season, 'inputmode="numeric" size="5"')}
-          ${text('episode', '話数', n.episode, 'inputmode="numeric" size="5"')}
-          ${text('rating', '評価 (0〜10)', n.rating, 'inputmode="decimal" size="6"')}
-          ${text('mpaa', '年齢制限', n.mpaa, 'size="8"')}
-        </div>
-        <div class="form-row">${text('tagline', 'キャッチコピー', n.tagline, 'grow')}</div>
-        <div class="form-row"><label class="field grow">あらすじ<textarea name="plot" rows="5">${esc(n.plot || '')}</textarea></label></div>
-        <p class="hint">以下は複数ある場合、カンマ（, または 、）で区切って入力します</p>
-        <div class="form-row">${text('genres', 'ジャンル', list(n.genres), 'grow')}${text('tags', 'タグ', list(n.tags), 'grow')}</div>
-        <div class="form-row">${text('studios', '制作', list(n.studios), 'grow')}${text('directors', '監督', list(n.directors), 'grow')}</div>
-        <div class="form-row">${text('actors', '出演', list(n.actors), 'grow')}</div>
+        <div class="form-row">${text('premiered', '発売日', n.premiered, 'size="12" placeholder="2019/05/25"')}</div>
+        <div class="form-row">${multiField('actors', '出演', n.actors)}</div>
+        <div class="form-row">${multiField('studios', '制作', n.studios)}</div>
+        <div class="form-row">${multiField('genres', 'ジャンル', n.genres)}</div>
+        <div class="form-row">${text('directors', '監督（複数ある場合は , で区切る）', list(n.directors), 'grow')}</div>
         <p class="hint">保存先: ${esc(target + note)}</p>
       </div>
       <div class="modal-actions">
@@ -572,22 +566,29 @@ function nfoEditor(it) {
     </form>`;
     document.body.append(modal);
     const form = $('form', modal);
+    const pickers = [...modal.querySelectorAll('.ms')].map((el) => multiSelect(el, choices));
+    let thumbChanged = false;
     const close = (changed) => {
       modal.remove();
-      resolve(changed);
+      resolve(changed || thumbChanged);
     };
-    modal.addEventListener('click', (e) => {
+    modal.addEventListener('click', async (e) => {
       if (e.target === modal || e.target.closest('[data-act="cancel"]')) close(false);
+      if (e.target.closest('[data-act="thumb"]') && await thumbEditor(it)) {
+        thumbChanged = true;
+        $('.nfo-thumb-img', modal).innerHTML = thumbImg(`/api/items/${it.id}/thumb?v=${Date.now()}`, false);
+      }
     });
     form.addEventListener('submit', async (e) => {
       e.preventDefault();
       const f = new FormData(form);
       const body = {};
-      for (const k of ['title', 'originalTitle', 'sortTitle', 'premiered', 'season', 'episode', 'rating', 'mpaa', 'tagline', 'plot']) body[k] = f.get(k);
+      for (const k of ['title', 'originalTitle', 'sortTitle', 'premiered']) body[k] = f.get(k);
       // 年は発売日の年にそろえる（発売日が無ければ今の年のまま）
       const d = normalizeDate(String(body.premiered || ''));
       body.year = d ? d.slice(0, 4) : n.year ?? '';
-      for (const k of ['genres', 'tags', 'studios', 'directors', 'actors']) body[k] = String(f.get(k)).split(/[,、，]/).map((s) => s.trim()).filter(Boolean);
+      body.directors = String(f.get('directors')).split(/[,、，]/).map((s) => s.trim()).filter(Boolean);
+      for (const p of pickers) body[p.name] = p.values();
       form.querySelectorAll('button, input, textarea').forEach((b) => { b.disabled = true; });
       try {
         await api(`/api/items/${it.id}/nfo`, { method: 'PUT', body });
@@ -628,6 +629,114 @@ function normalizeDate(input) {
   if (mo !== undefined && (mo < 1 || mo > 12)) return null;
   if (d !== undefined && new Date(y, mo - 1, d).getDate() !== d) return null;
   return [String(y), mo && String(mo).padStart(2, '0'), d && String(d).padStart(2, '0')].filter(Boolean).join('-');
+}
+
+/** 複数選択の入力欄（出演・制作・ジャンル）。中身は multiSelect() で動かす */
+function multiField(name, label, values) {
+  return `<div class="field grow"><span>${label}</span>
+    <div class="ms" data-name="${name}" data-values="${esc(JSON.stringify(values || []))}">
+      <input class="ms-input" autocomplete="off" placeholder="選択または入力して Enter" aria-label="${label}">
+      <ul class="ms-list" role="listbox" hidden></ul>
+    </div></div>`;
+}
+
+/**
+ * 選んだ値をチップで表示し、入力に合う候補（ライブラリで使われている値）を出す。
+ * 候補に無い値も Enter や「,」で追加できる。choices は /api/nfo-values の Promise
+ */
+function multiSelect(el, choices) {
+  const name = el.dataset.name;
+  const input = $('.ms-input', el);
+  const listEl = $('.ms-list', el);
+  const selected = JSON.parse(el.dataset.values || '[]');
+  let options = [];
+  let shown = [];
+  let active = -1;
+  choices.then((c) => { options = c[name] || []; });
+  const norm = (s) => s.normalize('NFKC').toLowerCase();
+
+  function renderChips() {
+    el.querySelectorAll('.ms-chip').forEach((c) => c.remove());
+    input.before(...selected.map((v, i) => {
+      const chip = document.createElement('span');
+      chip.className = 'ms-chip';
+      chip.innerHTML = `${esc(v)}<button type="button" aria-label="${esc(v)} を外す" data-i="${i}">×</button>`;
+      return chip;
+    }));
+  }
+  function renderList() {
+    const q = norm(input.value.trim());
+    const rest = options.filter((o) => !selected.includes(o));
+    shown = (q ? rest.filter((o) => norm(o).includes(q)) : rest).slice(0, 50);
+    const typed = input.value.trim();
+    if (typed && !selected.includes(typed) && !options.includes(typed)) shown.push({ add: typed });
+    if (active >= shown.length) active = shown.length - 1;
+    listEl.innerHTML = shown.map((o, i) => `<li role="option" data-i="${i}" class="${i === active ? 'active' : ''}">${o.add ? `「${esc(o.add)}」を追加` : esc(o)}</li>`).join('');
+    listEl.hidden = document.activeElement !== input || !shown.length;
+    listEl.querySelector('.active')?.scrollIntoView({ block: 'nearest' });
+  }
+  function add(v) {
+    v = String(v).trim();
+    if (v && !selected.includes(v)) selected.push(v);
+    input.value = '';
+    active = -1;
+    renderChips();
+    renderList();
+  }
+  function removeAt(i) {
+    selected.splice(i, 1);
+    renderChips();
+    renderList();
+  }
+
+  el.addEventListener('click', (e) => {
+    const x = e.target.closest('.ms-chip button');
+    if (x) removeAt(Number(x.dataset.i));
+    input.focus();
+  });
+  // mousedown で選ぶ（click だと先に入力欄のフォーカスが外れて一覧が消えるため）
+  listEl.addEventListener('mousedown', (e) => {
+    const li = e.target.closest('li');
+    if (!li) return;
+    e.preventDefault();
+    const o = shown[Number(li.dataset.i)];
+    add(o.add ?? o);
+  });
+  input.addEventListener('focus', () => { active = -1; renderList(); });
+  input.addEventListener('blur', () => { listEl.hidden = true; });
+  input.addEventListener('input', () => {
+    if (/[,、，]/.test(input.value)) {
+      const parts = input.value.split(/[,、，]/);
+      input.value = parts.pop();
+      parts.forEach((p) => add(p));
+    }
+    active = input.value.trim() ? 0 : -1;
+    renderList();
+  });
+  input.addEventListener('keydown', (e) => {
+    if (e.isComposing) return;
+    if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+      e.preventDefault();
+      if (!shown.length) return;
+      if (e.key === 'ArrowDown') active = active + 1 >= shown.length ? 0 : active + 1;
+      else active = active <= 0 ? shown.length - 1 : active - 1;
+      renderList();
+    } else if (e.key === 'Enter') {
+      if (!input.value.trim() && active < 0) return; // 何も選んでいなければ Enter で保存
+      e.preventDefault();
+      const o = shown[active];
+      add(o ? o.add ?? o : input.value);
+    } else if (e.key === 'Backspace' && !input.value && selected.length) {
+      removeAt(selected.length - 1);
+    } else if (e.key === 'Escape' && !listEl.hidden) {
+      e.preventDefault();
+      e.stopPropagation();
+      listEl.hidden = true;
+    }
+  });
+  renderChips();
+  // 入力途中の文字も、保存時には値として含める
+  return { name, values: () => [...new Set([...selected, input.value.trim()].filter(Boolean))] };
 }
 
 /** サムネイル変更ダイアログ。変更したら true を返す */

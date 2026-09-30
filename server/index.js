@@ -380,6 +380,18 @@ route('PUT', '/api/items/:id/nfo', async ({ params, body }) => {
   }
 }, 'admin');
 
+// メタデータ編集の選択肢: ライブラリの NFO にある出演者・制作・ジャンル（使われている数の多い順）
+route('GET', '/api/nfo-values', () => {
+  const count = { actors: new Map(), studios: new Map(), genres: new Map() };
+  for (const it of library.items.values()) {
+    for (const [key, m] of Object.entries(count)) {
+      for (const v of it.nfo?.[key] || []) m.set(v, (m.get(v) || 0) + 1);
+    }
+  }
+  const sorted = (m) => [...m].sort((a, b) => b[1] - a[1] || naturalCompare(a[0], b[0])).map(([v]) => v);
+  return { actors: sorted(count.actors), studios: sorted(count.studios), genres: sorted(count.genres) };
+}, 'admin');
+
 // シークバーのプレビュー。無ければバックグラウンドで生成を始め、{ pending: true } を返す
 route('GET', '/api/items/:id/trickplay', async ({ params }) => {
   const it = getItem(params.id);

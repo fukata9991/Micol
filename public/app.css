@@ -281,7 +281,22 @@ input[type=range].seek:hover::-webkit-slider-thumb { margin-top: -4px; }
 .folder-nfo .meta { margin-top: 0; }
 .detail h1 .ep { color: var(--accent); font-size: .75em; margin-right: 10px; vertical-align: middle; }
 .thumb-edit { margin-top: 10px; }
-.thumb-edit + .thumb-edit { margin-left: 6px; }
+.icon-btn { font-size: 16px; line-height: 1; padding: 6px 10px; }
+
+/* ---------- メタデータ編集 ---------- */
+.nfo-thumb { display: flex; align-items: end; gap: 12px; margin-bottom: 12px; }
+.nfo-thumb-img { width: 200px; aspect-ratio: var(--thumb-ratio); border-radius: 8px; overflow: hidden; background: #000; }
+.nfo-thumb-img img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.nfo-thumb-img .thumb-bg { display: none; }
+.ms { position: relative; display: flex; flex-wrap: wrap; gap: 6px; align-items: center; padding: 6px 8px; border-radius: 8px; border: 1px solid var(--border); background: var(--bg); cursor: text; }
+.ms:focus-within { border-color: var(--accent); }
+.field .ms .ms-input { flex: 1; min-width: 140px; border: 0; padding: 3px 4px; background: transparent; }
+.ms-chip { display: inline-flex; align-items: center; gap: 4px; padding: 3px 4px 3px 10px; border-radius: 999px; background: var(--surface-2); color: var(--text); font-size: 13px; }
+.ms-chip button { border: 0; background: none; color: var(--muted); cursor: pointer; font-size: 14px; line-height: 1; padding: 0 4px; border-radius: 999px; }
+.ms-chip button:hover { color: var(--text); background: var(--border); }
+.ms-list { position: absolute; left: -1px; right: -1px; top: calc(100% + 4px); z-index: 5; list-style: none; margin: 0; padding: 4px 0; max-height: 220px; overflow-y: auto; background: var(--surface); border: 1px solid var(--border); border-radius: 8px; box-shadow: 0 8px 24px rgba(0,0,0,.35); }
+.ms-list li { padding: 6px 12px; cursor: pointer; color: var(--text); font-size: 14px; }
+.ms-list li:hover, .ms-list li.active { background: var(--surface-2); }
 
 /* ---------- サムネイル変更 ---------- */
 .modal-box.wide { width: min(720px, 100%); }
