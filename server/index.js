@@ -302,6 +302,9 @@ route('GET', '/api/favorites', ({ prog, user }) => {
   return { items, people };
 });
 
+// お気に入りの動画 id（カードのハートの表示用）
+route('GET', '/api/favorites/ids', ({ user }) => ({ items: Object.keys(userFavorites(user).items) }));
+
 route('PUT', '/api/favorites/items/:id', ({ params, body, user }) => {
   const it = getItem(params.id);
   const fav = userFavorites(user);

@@ -78,10 +78,11 @@ function episodeLabel(it) {
 
 function itemCard(it, sub = '') {
   const pct = it.duration && it.position ? Math.min(100, (it.position / it.duration) * 100) : 0;
-  sub = sub || [episodeLabel(it), it.year].filter(Boolean).join(' ・ ');
+  sub = sub || episodeLabel(it);
   return `<a class="card" href="#/item/${it.id}">
     <div class="thumb">
       ${thumbImg(cardThumbUrl(it))}
+      ${cardFavButton(it.id)}
       ${it.watched ? '<span class="badge" title="視聴済み">✓</span>' : ''}
       ${it.duration ? `<span class="dur">${fmtTime(it.duration)}</span>` : ''}
       <button class="play-overlay" data-play="${it.id}" title="再生" aria-label="再生">▶</button>
@@ -99,7 +100,6 @@ function folderCard(f) {
       <span class="badge count">${f.count}</span>
     </div>
     <div class="card-title" title="${esc(f.name)}">${esc(f.name)}</div>
-    ${f.year ? `<div class="card-sub">${f.year}</div>` : ''}
   </a>`;
 }
 
@@ -165,6 +165,44 @@ document.addEventListener('click', (e) => {
   e.preventDefault();
   e.stopPropagation();
   location.hash = `#/play/${btn.dataset.play}`;
+});
+
+// ---------- お気に入り（カードのハート） ----------
+
+let favItems = new Set(); // お気に入りの動画 id
+let favReady = Promise.resolve();
+function loadFavIds() {
+  favReady = api('/api/favorites/ids').then((d) => { favItems = new Set(d.items); }).catch(() => {});
+  return favReady;
+}
+
+function cardFavButton(id) {
+  const on = favItems.has(id);
+  const label = on ? 'お気に入りから外す' : 'お気に入りに追加';
+  return `<button class="card-fav${on ? ' on' : ''}" data-fav="${id}" title="${label}" aria-label="${label}" aria-pressed="${on}">${navSvg(on ? 'heart' : 'heartOutline')}</button>`;
+}
+
+/** 動画のお気に入りを切り替え、画面上の同じ動画のハートをまとめて更新する */
+async function setItemFavorite(id, on) {
+  const r = await api(`/api/favorites/items/${id}`, { method: 'PUT', body: { favorite: on } });
+  if (r.favorite) favItems.add(id);
+  else favItems.delete(id);
+  document.querySelectorAll(`[data-fav="${id}"]`).forEach((b) => { b.outerHTML = cardFavButton(id); });
+  return r.favorite;
+}
+
+// カード上のハート（リンク内のボタンなので伝播を止める）
+document.addEventListener('click', async (e) => {
+  const btn = e.target.closest('[data-fav]');
+  if (!btn) return;
+  e.preventDefault();
+  e.stopPropagation();
+  try {
+    const on = await setItemFavorite(btn.dataset.fav, !favItems.has(btn.dataset.fav));
+    toast(on ? 'お気に入りに追加しました' : 'お気に入りから外しました');
+  } catch (err) {
+    toast(err.message);
+  }
 });
 
 // ---------- サイドバー ----------
@@ -368,6 +406,8 @@ async function router() {
   setAccountMenu(false);
   markNav(parts[0] === 'folder' ? `#/folder/${parts[1]}` : parts[0] === 'person' || parts[0] === 'aliases' ? '#/people' : `#/${parts[0] || ''}`);
   try {
+    await favReady; // カードのハートの表示に使う
+    if (seq !== routeSeq) return;
     switch (parts[0]) {
       case undefined: await renderHome(view, seq); break;
       case 'folder': await renderFolder(view, parts[1], seq); break;
@@ -533,7 +573,7 @@ async function renderItem(view, id) {
     await api(`/api/items/${id}/watched`, { method: 'POST', body: { watched: !it.watched } });
     router();
   };
-  bindFavButton($('.fav-btn', view), `/api/favorites/items/${id}`);
+  bindFavButton($('.fav-btn', view), `/api/favorites/items/${id}`, (on) => { if (on) favItems.add(id); else favItems.delete(id); });
   if (me.admin) $('#edit-nfo', view).onclick = async () => {
     if (await nfoEditor(it)) router();
   };
@@ -1174,12 +1214,13 @@ function favButton(on) {
 }
 
 /** お気に入りボタンを押したら登録・解除し、ボタンの表示だけ切り替える */
-function bindFavButton(btn, url) {
+function bindFavButton(btn, url, onChange) {
   btn.onclick = async () => {
     const on = !btn.classList.contains('on');
     btn.disabled = true;
     try {
       const r = await api(url, { method: 'PUT', body: { favorite: on } });
+      onChange?.(r.favorite);
       btn.classList.toggle('on', r.favorite);
       btn.setAttribute('aria-pressed', String(r.favorite));
       btn.querySelector('path').setAttribute('d', NAV_ICON[r.favorite ? 'heart' : 'heartOutline']);
@@ -2213,6 +2254,7 @@ function enterApp(user) {
   renderAccountButton();
   renderSidebar();
   loadLibraries();
+  loadFavIds();
   router();
 }
 

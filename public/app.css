@@ -127,6 +127,17 @@ body.playing main { padding: 0; max-width: none; }
   opacity: 0; transform: scale(.85); transition: opacity .15s, transform .15s;
 }
 .card:hover .play-overlay { opacity: 1; transform: scale(1); }
+/* カード左上のお気に入り（登録済みは常に表示、未登録はマウスを乗せたとき。タッチ端末では常に表示） */
+.card-fav {
+  position: absolute; top: 6px; left: 6px; z-index: 1; width: 32px; height: 32px; padding: 0;
+  display: grid; place-items: center; border: 0; border-radius: 50%; cursor: pointer;
+  background: rgba(0,0,0,.5); color: #fff; opacity: 0; transition: opacity .15s;
+}
+.card-fav svg { width: 18px; height: 18px; }
+.card-fav.on { opacity: 1; color: #ff5a79; }
+.card:hover .card-fav, .card-fav:focus-visible { opacity: 1; }
+.card-fav:hover { background: rgba(0,0,0,.75); }
+@media (hover: none) { .card-fav { opacity: .85; } .card-fav.on { opacity: 1; } }
 .card-title { margin-top: 8px; font-size: 14px; font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .card-sub { font-size: 12px; color: var(--muted); }
 
