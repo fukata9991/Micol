@@ -147,7 +147,6 @@ body.playing main { padding: 0; max-width: none; }
 .tech { display: grid; grid-template-columns: 80px 1fr; gap: 6px 14px; font-size: 14px; margin: 0; }
 .tech dt { color: var(--muted); }
 .tech dd { margin: 0; word-break: break-all; }
-.nav-links { display: flex; justify-content: space-between; gap: 12px; margin-top: 24px; }
 @media (max-width: 860px) { .detail { grid-template-columns: 1fr; } }
 
 /* ---------- 設定 ---------- */

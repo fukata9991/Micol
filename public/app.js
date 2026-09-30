@@ -521,10 +521,6 @@ async function renderItem(view, id) {
         <dl class="tech">
           <dt>ファイル</dt><dd>${esc(it.path)}</dd>
         </dl>
-        <div class="nav-links">
-          <span>${it.prev ? `<a class="btn small" href="#/item/${it.prev.id}">‹ ${esc(it.prev.name)}</a>` : ''}</span>
-          <span>${it.next ? `<a class="btn small" href="#/item/${it.next.id}">${esc(it.next.name)} ›</a>` : ''}</span>
-        </div>
       </div>
     </div>
     ${(it.related || []).map((g) => {
