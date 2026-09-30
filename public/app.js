@@ -1020,35 +1020,12 @@ async function renderPerson(view, name) {
   view.innerHTML = `
     <nav class="crumbs"><a href="#/people">女優</a></nav>
     <div class="person-head">
-      ${personPhoto(d, false)}
+      ${personPhoto(d, false, me.admin ? `<button class="thumb-edit-btn" id="edit-person" title="編集" aria-label="女優の情報を編集">${navSvg('edit')}</button>` : '')}
       <div>
         <h1 class="page-title">${esc(d.name)}</h1>
         <div class="muted">${d.items.length} 作品</div>
-        <div class="aliases">${d.aliases.length ? `別名：${d.aliases.map((a) => esc(a)).join('、')}` : '<span class="muted">別名 なし</span>'}
-          ${me.admin ? '<button class="btn small" id="edit-aliases">別名を編集</button><button class="btn small" id="merge-person">別の女優と統合</button>' : ''}</div>
-        ${me.admin ? `<div class="photo-actions">
-          <label class="btn small">写真を変更…<input type="file" id="photo-file" accept="image/jpeg,image/png,image/webp" hidden></label>
-          ${d.thumb ? '<button class="btn small" id="photo-clear">写真を削除</button>' : ''}
-        </div>` : ''}
-        <form class="birth-form" id="alias-form" hidden>
-          <input name="aliases" size="40" placeholder="別名（、または , で区切る）" aria-label="別名">
-          <button class="btn small primary">保存</button>
-          <button type="button" class="btn small" data-act="cancel">キャンセル</button>
-        </form>
-        <form class="birth-form" id="merge-form" hidden>
-          <input name="other" list="people-names" size="24" placeholder="統合する女優の名前" aria-label="統合する女優">
-          <datalist id="people-names"></datalist>
-          <button class="btn small primary">統合</button>
-          <button type="button" class="btn small" data-act="cancel">キャンセル</button>
-        </form>
-        <div class="birth">${d.birthdate ? `生年月日 ${esc(d.birthdate)}（${ageLabel(d.birthdate, todayStr())}）` : '<span class="muted">生年月日 未設定</span>'}
-          ${me.admin ? '<button class="btn small" id="edit-birth">生年月日を設定</button>' : ''}</div>
-        <form class="birth-form" id="birth-form" hidden>
-          <input type="date" name="birthdate" max="${todayStr()}" aria-label="生年月日">
-          <button class="btn small primary">保存</button>
-          <button type="button" class="btn small" data-act="clear">削除</button>
-          <button type="button" class="btn small" data-act="cancel">キャンセル</button>
-        </form>
+        <div class="aliases">${d.aliases.length ? `別名：${d.aliases.map((a) => esc(a)).join('、')}` : '<span class="muted">別名 なし</span>'}</div>
+        <div class="birth">${d.birthdate ? `生年月日 ${esc(d.birthdate)}（${ageLabel(d.birthdate, todayStr())}）` : '<span class="muted">生年月日 未設定</span>'}</div>
         <div class="actions">
           ${target ? `<a class="btn primary" href="#/play/${target.id}">▶ ${target.position > 10 ? '続きを再生' : '再生'}</a>` : ''}
           ${favButton(d.favorite)}
@@ -1062,9 +1039,67 @@ async function renderPerson(view, name) {
     ].filter(Boolean).join(' ・ '))).join('')}</div>`;
 
   bindFavButton($('.fav-btn', view), `/api/favorites/person?name=${encodeURIComponent(d.name)}`, (on) => { if (on) favPeople.add(d.name); else favPeople.delete(d.name); });
-  if (!me.admin) return;
-  // 写真の変更・削除（出演作のフォルダの .actors/名義.jpg を書き換える）
-  $('#photo-file', view).addEventListener('change', async (e) => {
+  if (me.admin) $('#edit-person', view).onclick = () => personEditor(d);
+}
+
+/**
+ * 女優の編集ダイアログ: 写真・別名・生年月日・別の女優との統合をまとめて扱う。
+ * 写真と統合はその場で反映し、別名と生年月日は「保存」で反映する
+ */
+function personEditor(d) {
+  const choices = api('/api/nfo-values')
+    .then((c) => ({ aliases: (c.actors || []).filter((n) => n !== d.name && !d.aliases.includes(n)) }))
+    .catch(() => ({}));
+  const fullDate = /^\d{4}-\d{2}-\d{2}$/.test(d.birthdate || '');
+  const modal = document.createElement('div');
+  modal.className = 'modal';
+  modal.innerHTML = `<form class="modal-box wide nfo-form" role="dialog" aria-label="女優の情報を編集">
+    <h3>${esc(d.name)} を編集</h3>
+    <div class="nfo-fields">
+      <div class="person-edit-photo">
+        ${personPhoto(d, false)}
+        <div class="photo-actions">
+          <label class="btn small">写真を変更…<input type="file" data-act="photo" accept="image/jpeg,image/png,image/webp" hidden></label>
+          ${d.thumb ? '<button type="button" class="btn small" data-act="photo-clear">写真を削除</button>' : ''}
+        </div>
+      </div>
+      <div class="form-row">${multiField('aliases', '別名', d.aliases)}</div>
+      <div class="form-row">
+        <label class="field">生年月日<input type="date" name="birthdate" max="${todayStr()}" value="${fullDate ? esc(d.birthdate) : ''}"></label>
+        <button type="button" class="btn small" data-act="birth-clear">生年月日を削除</button>
+      </div>
+      ${d.birthdate && !fullDate ? `<p class="hint">今の生年月日は「${esc(d.birthdate)}」（日付の一部だけ）です。日付を入れると置き換えます。</p>` : ''}
+      <div class="form-row merge-row">
+        <label class="field grow">別の女優と統合（その女優の名義をすべてこの女優の別名にします）
+          <input name="other" list="merge-names" placeholder="統合する女優の名前" autocomplete="off">
+        </label>
+        <datalist id="merge-names"></datalist>
+        <button type="button" class="btn small" data-act="merge">統合</button>
+      </div>
+    </div>
+    <div class="modal-actions">
+      <span class="spacer"></span>
+      <button type="button" class="btn" data-act="cancel">キャンセル</button>
+      <button type="submit" class="btn primary">保存</button>
+    </div>
+  </form>`;
+  document.body.append(modal);
+  const form = $('form', modal);
+  const [aliasPicker] = [...modal.querySelectorAll('.ms')].map((el) => multiSelect(el, choices));
+  let birthCleared = false;
+  const close = () => modal.remove();
+  // 名前が変わる（別名・統合で作品数の多い名義が代表名になる）ことがあるので、結果の名前のページを開き直す
+  const reopen = (name) => {
+    close();
+    if (name && name !== d.name) location.hash = personHref(name);
+    else router();
+  };
+  api('/api/people').then((r) => {
+    $('#merge-names', modal).innerHTML = r.people.filter((p) => p.name !== d.name).map((p) => `<option value="${esc(p.name)}">${p.count} 作品</option>`).join('');
+  }).catch(() => {});
+
+  // 写真: 出演作のフォルダの .actors/名義.jpg を書き換える
+  $('[data-act="photo"]', modal).addEventListener('change', async (e) => {
     const file = e.target.files[0];
     if (!file) return;
     toast('写真を保存しています…', 10000);
@@ -1073,81 +1108,59 @@ async function renderPerson(view, name) {
       const j = await r.json().catch(() => ({}));
       if (!r.ok) throw new Error(j.error || r.statusText);
       toast(`写真を変更しました（${j.written} か所）`);
-      router();
+      reopen();
     } catch (err) { toast(`保存できませんでした: ${err.message}`, 6000); }
   });
-  $('#photo-clear', view)?.addEventListener('click', async () => {
-    if (!confirm(`${d.name} の写真（各作品のフォルダの .actors の画像）を削除しますか？\n（NFO に画像の指定があれば、そちらが表示されます）`)) return;
-    try {
-      const j = await api(`/api/person/photo?name=${encodeURIComponent(d.name)}`, { method: 'DELETE' });
-      toast(`写真を削除しました（${j.removed} 件）`);
-      router();
-    } catch (err) { toast(err.message); }
-  });
-  // 別名の編集: 入れた名義を同じ女優にまとめる（外した名義は別の女優に戻る）
-  const aliasForm = $('#alias-form', view);
-  $('#edit-aliases', view).onclick = () => {
-    aliasForm.hidden = false;
-    aliasForm.aliases.value = d.aliases.join('、');
-    aliasForm.aliases.focus();
-  };
-  aliasForm.onsubmit = async (e) => {
-    e.preventDefault();
-    const list = aliasForm.aliases.value.split(/[、,，\n]/).map((s) => s.trim()).filter(Boolean);
-    try {
-      const p = await api(`/api/person/aliases?name=${encodeURIComponent(d.name)}`, { method: 'PUT', body: { aliases: list } });
-      toast('別名を保存しました');
-      location.hash = personHref(p.name); // 作品数で代表名が変わることがある
-      router();
-    } catch (err) { toast(err.message); }
-  };
-  aliasForm.querySelector('[data-act="cancel"]').onclick = () => { aliasForm.hidden = true; };
-  // 統合: 選んだ女優の名義をすべてこの女優の別名にする
-  const mergeForm = $('#merge-form', view);
-  $('#merge-person', view).onclick = async () => {
-    mergeForm.hidden = false;
-    mergeForm.other.focus();
-    try {
-      const all = (await api('/api/people')).people.filter((p) => p.name !== d.name);
-      $('#people-names', view).innerHTML = all.map((p) => `<option value="${esc(p.name)}">${p.count} 作品</option>`).join('');
-    } catch {}
-  };
-  mergeForm.onsubmit = async (e) => {
-    e.preventDefault();
-    const other = mergeForm.other.value.trim();
-    if (!other) return toast('統合する女優の名前を入力してください');
-    if (!confirm(`「${other}」を「${d.name}」と同じ女優としてまとめますか？`)) return;
-    try {
-      const p = await api(`/api/person/merge?name=${encodeURIComponent(d.name)}`, { method: 'POST', body: { name: other } });
-      toast('統合しました');
-      location.hash = personHref(p.name);
-      router();
-    } catch (err) { toast(err.message); }
-  };
-  mergeForm.querySelector('[data-act="cancel"]').onclick = () => { mergeForm.hidden = true; };
 
-  const form = $('#birth-form', view);
-  const save = async (birthdate) => {
-    try {
-      await api(`/api/person?name=${encodeURIComponent(d.name)}`, { method: 'PUT', body: { birthdate } });
-      toast(birthdate ? '生年月日を保存しました' : '生年月日を削除しました');
-      router();
-    } catch (e) { toast(e.message); }
-  };
-  $('#edit-birth', view).onclick = () => {
-    form.hidden = false;
-    form.birthdate.value = /^\d{4}-\d{2}-\d{2}$/.test(d.birthdate || '') ? d.birthdate : '';
-    form.birthdate.focus();
-  };
-  form.onsubmit = (e) => {
-    e.preventDefault();
-    if (!form.birthdate.value) return toast('生年月日を入力してください');
-    save(form.birthdate.value);
-  };
-  form.addEventListener('click', (e) => {
+  modal.addEventListener('click', async (e) => {
+    if (e.target === modal) return close();
     const act = e.target.closest('[data-act]')?.dataset.act;
-    if (act === 'cancel') form.hidden = true;
-    if (act === 'clear' && confirm(`${d.name} の生年月日を削除しますか？`)) save('');
+    if (act === 'cancel') close();
+    if (act === 'photo-clear') {
+      if (!confirm(`${d.name} の写真（各作品のフォルダの .actors の画像）を削除しますか？\n（NFO に画像の指定があれば、そちらが表示されます）`)) return;
+      try {
+        const j = await api(`/api/person/photo?name=${encodeURIComponent(d.name)}`, { method: 'DELETE' });
+        toast(`写真を削除しました（${j.removed} 件）`);
+        reopen();
+      } catch (err) { toast(err.message); }
+    }
+    if (act === 'birth-clear') {
+      form.birthdate.value = '';
+      birthCleared = true;
+    }
+    if (act === 'merge') {
+      const other = form.other.value.trim();
+      if (!other) return toast('統合する女優の名前を入力してください');
+      if (!confirm(`「${other}」を「${d.name}」と同じ女優としてまとめますか？`)) return;
+      try {
+        const p = await api(`/api/person/merge?name=${encodeURIComponent(d.name)}`, { method: 'POST', body: { name: other } });
+        toast('統合しました');
+        reopen(p.name);
+      } catch (err) { toast(err.message); }
+    }
+  });
+  form.birthdate.addEventListener('input', () => { birthCleared = false; });
+  // 統合の名前欄で Enter を押しても、ダイアログ全体を保存しない
+  form.other.addEventListener('keydown', (e) => { if (e.key === 'Enter') e.preventDefault(); });
+
+  form.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const aliases = aliasPicker.values();
+    const aliasesChanged = aliases.join('\n') !== d.aliases.join('\n');
+    const birth = form.birthdate.value;
+    const birthChanged = birthCleared ? !!d.birthdate : birth && birth !== d.birthdate;
+    if (!aliasesChanged && !birthChanged) return close();
+    form.querySelectorAll('button, input').forEach((b) => { b.disabled = true; });
+    try {
+      let name = d.name;
+      if (aliasesChanged) name = (await api(`/api/person/aliases?name=${encodeURIComponent(name)}`, { method: 'PUT', body: { aliases } })).name;
+      if (birthChanged) await api(`/api/person?name=${encodeURIComponent(name)}`, { method: 'PUT', body: { birthdate: birthCleared ? '' : birth } });
+      toast('保存しました');
+      reopen(name);
+    } catch (err) {
+      toast(`保存できませんでした: ${err.message}`, 6000);
+      form.querySelectorAll('button, input').forEach((b) => { b.disabled = false; });
+    }
   });
 }
 
